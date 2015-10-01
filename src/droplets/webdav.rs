@@ -13,6 +13,8 @@ use nickel::{Continue, Nickel, Request, Response, Middleware,
 use nickel::mimes::MediaType;
 use nickel::status::StatusCode;
 
+use storage::Config;
+
 
 pub struct WebDavHandler {
     root_path: PathBuf,
@@ -93,9 +95,9 @@ impl WebDavHandler {
     }
 }
 
-pub fn start() {
+pub fn start(conf: &Config) {
     let mut server = Nickel::new();
-    server.utilize(WebDavHandler::new(Path::new("/tmp")));
+    server.utilize(WebDavHandler::new(conf.storage.path));
     server.listen("127.0.0.1:8888");
 }
 

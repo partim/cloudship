@@ -28,5 +28,5 @@ fn main() {
         storage::initialize(&conf)
     }
 
-    webdav::start();
+    webdav::start(&conf);
 }
