@@ -74,14 +74,14 @@ impl<D> Responder<D> for DavProp {
         //    .enclosed("displayname", name);
         // res.send(xml.to_string())
 
-        data.write_str("<prop>");
-        data.write_str("<creationdate/>");
-        write!(data, "<displayname>{}</displayname>", self.display_name);
-        data.write_str("<getcontentlength/>");
-        data.write_str("<getcontenttype/>");
-        data.write_str("<resourcetype/>");
-        data.write_str("<supportedlock/>");
-        data.write_str("</prop>");
+        data.push_str("<creationdate/>");
+        data.push_str("<creationdate/>");
+        write!(data, "<displayname>{}</displayname>", self.display_name).unwrap();
+        data.push_str("<getcontentlength/>");
+        data.push_str("<getcontenttype/>");
+        data.push_str("<resourcetype/>");
+        data.push_str("<supportedlock/>");
+        data.push_str("</prop>");
         res.send(data)
     }
 }
