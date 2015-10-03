@@ -98,7 +98,7 @@ impl WebDavHandler {
 pub fn start(conf: &Config) {
     let mut server = Nickel::new();
     server.utilize(WebDavHandler::new(conf.storage.path));
-    server.listen("127.0.0.1:8888");
+    server.listen(("127.0.0.1", conf.http_port));
 }
 
 fn request_path<D>(req: &Request<D>) -> PathBuf {

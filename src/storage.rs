@@ -4,6 +4,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process;
 
+
 pub struct Config<'a> {
     pub http_port: u16,
     pub storage: Storage<'a>,
@@ -26,10 +27,6 @@ impl<'a> Storage<'a> {
 
     pub fn new(path: &Path) -> Storage {
         Storage { path: path }
-    }
-
-    pub fn exists(&self, path: &Path) -> bool {
-        fs::metadata(self.path).is_ok()
     }
 
     pub fn has_parent(&self, path: &Path) -> bool {
