@@ -45,6 +45,35 @@ impl<D> Responder<D> for DavProp {
     fn respond<'a>(self, mut res: Response<'a, D>) -> MiddlewareResult<'a, D> {
         res.set(MediaType::Xml);
         let mut data = String::with_capacity(100);
+
+        // These writes will produce a lot of warnings because the
+        // result is ignored.  Matching like this is possible but
+        // verbose:
+        //
+        // match data.write_str("<prop>") {
+        //     Ok(_)  => res.send(data),
+        //     Err(_) => res.error(StatusCode::InternalServerError,
+        //                         "error writing response data"),
+        // }
+        //
+        // Response also implements Writer, so one should be able to
+        // write! directly to it (and then send an empty string to get
+        // the MiddlewareResult).  However this does not appear to be
+        // working.
+        //
+        // Another approach would be to map the errors into NickelError
+        // using map_err, but unfortunately this needs the Response as
+        // its first argument.  This would cause it to get moved into
+        // the closure, and Response does not implement Clone.
+        //
+        // I think the best solution would be to implement a proper XML
+        // writer that allows something along the lines of this:
+        //
+        // let mut xml = XmlWriter::new("prop");
+        // xml.empty("creationdate")
+        //    .enclosed("displayname", name);
+        // res.send(xml.to_string())
+
         data.write_str("<prop>");
         data.write_str("<creationdate/>");
         write!(data, "<displayname>{}</displayname>", self.display_name);
