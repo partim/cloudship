@@ -74,7 +74,7 @@ impl<D> Responder<D> for DavProp {
         //    .enclosed("displayname", name);
         // res.send(xml.to_string())
 
-        data.push_str("<creationdate/>");
+        data.push_str("<prop>");
         data.push_str("<creationdate/>");
         write!(data, "<displayname>{}</displayname>", self.display_name).unwrap();
         data.push_str("<getcontentlength/>");
