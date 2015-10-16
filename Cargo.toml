@@ -7,3 +7,4 @@ authors = ["Bjørn Nordbø <bn@strangedays.no>"]
 docopt  = "0.6.*"
 hyper   = "0.6.*"
 nickel  = "0.7.*"
+xml-rs  = "0.2"

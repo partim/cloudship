@@ -1,9 +1,9 @@
 extern crate hyper;
 extern crate nickel;
+extern crate xml;
 
-use std::io::{Error, ErrorKind};
+use std::io::{Error, ErrorKind, Write};
 use std::ffi::OsString;
-use std::fmt::Write;
 use std::fs;
 use std::fs::{DirEntry};
 use std::path::{Path, PathBuf, Component};
@@ -12,6 +12,7 @@ use nickel::{Continue, Nickel, Request, Response, Middleware,
              MiddlewareResult, Responder};
 use nickel::mimes::MediaType;
 use nickel::status::StatusCode;
+use xml::writer::{EventWriter, EmitterConfig, XmlEvent};
 
 use storage::Config;
 
@@ -39,49 +40,41 @@ impl DavProp {
             resource_type: false,
         }
     }
+
+    fn to_xml<W: Write>(&self, writer: &mut EventWriter<W>) -> xml::writer::Result<()> {
+        try!(writer.write(XmlEvent::start_element("prop")));
+        try!(writer.write(XmlEvent::start_element("creationdate")));
+        try!(writer.write(XmlEvent::end_element()));
+        try!(writer.write(XmlEvent::start_element("displayname")));
+        try!(writer.write(XmlEvent::cdata(&self.display_name)));
+        try!(writer.write(XmlEvent::end_element()));
+        try!(writer.write(XmlEvent::start_element("getcontentlength")));
+        try!(writer.write(XmlEvent::end_element()));
+        try!(writer.write(XmlEvent::start_element("getcontenttype")));
+        try!(writer.write(XmlEvent::end_element()));
+        try!(writer.write(XmlEvent::start_element("resourcetype")));
+        try!(writer.write(XmlEvent::end_element()));
+        try!(writer.write(XmlEvent::start_element("supportedlock")));
+        try!(writer.write(XmlEvent::end_element()));
+        try!(writer.write(XmlEvent::end_element()));
+        Ok(())
+    }
 }
 
 impl<D> Responder<D> for DavProp {
     fn respond<'a>(self, mut res: Response<'a, D>) -> MiddlewareResult<'a, D> {
         res.set(MediaType::Xml);
-        let mut data = String::with_capacity(100);
+        let mut data = Vec::new();
+        {
+            let mut writer = EmitterConfig::new().perform_indent(true)
+                                                 .create_writer(&mut data);
 
-        // These writes will produce a lot of warnings because the
-        // result is ignored.  Matching like this is possible but
-        // verbose:
-        //
-        // match data.write_str("<prop>") {
-        //     Ok(_)  => res.send(data),
-        //     Err(_) => res.error(StatusCode::InternalServerError,
-        //                         "error writing response data"),
-        // }
-        //
-        // Response also implements Writer, so one should be able to
-        // write! directly to it (and then send an empty string to get
-        // the MiddlewareResult).  However this does not appear to be
-        // working.
-        //
-        // Another approach would be to map the errors into NickelError
-        // using map_err, but unfortunately this needs the Response as
-        // its first argument.  This would cause it to get moved into
-        // the closure, and Response does not implement Clone.
-        //
-        // I think the best solution would be to implement a proper XML
-        // writer that allows something along the lines of this:
-        //
-        // let mut xml = XmlWriter::new("prop");
-        // xml.empty("creationdate")
-        //    .enclosed("displayname", name);
-        // res.send(xml.to_string())
-
-        data.push_str("<prop>");
-        data.push_str("<creationdate/>");
-        write!(data, "<displayname>{}</displayname>", self.display_name).unwrap();
-        data.push_str("<getcontentlength/>");
-        data.push_str("<getcontenttype/>");
-        data.push_str("<resourcetype/>");
-        data.push_str("<supportedlock/>");
-        data.push_str("</prop>");
+            match self.to_xml(&mut writer) {
+                Err(_) => return res.error(StatusCode::InternalServerError,
+                                           "Internal server error"),
+                _ => {}
+            }
+        }
         res.send(data)
     }
 }
