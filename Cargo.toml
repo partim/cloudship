@@ -1,10 +1,14 @@
 [package]
 name    = "cloudship"
 version = "0.1.0"
-authors = ["Bjørn Nordbø <bn@strangedays.no>"]
+authors = ["Bjørn Nordbø <bn@strangedays.no>", "Martin Hoffmann <hn@nvnc.de>"]
 
 [dependencies]
 docopt  = "0.6.*"
 hyper   = "0.6.*"
 nickel  = "0.7.*"
 xml-rs  = "0.2"
+
+[[bin]]
+name = "cloudship"
+doc = false
