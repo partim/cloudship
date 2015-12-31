@@ -1,32 +1,26 @@
 extern crate cloudship;
 extern crate docopt;
+extern crate env_logger;
 
-use cloudship::droplets::webdav;
-use cloudship::storage;
-use cloudship::storage::{Config, Storage};
 use docopt::Docopt;
 use std::env;
 use std::path::Path;
+use cloudship::daemons;
 
 static USAGE: &'static str = "
-Usage: cloudship [--init] <path>
-
-Options:
-    --init  Initialize a new cloudship.
+Usage: cloudship <config>
 ";
 
 fn main() {
+    env_logger::init().unwrap();
+
     let args = Docopt::new(USAGE)
         .and_then(|d| d.argv(env::args().into_iter()).parse())
         .unwrap_or_else(|e| e.exit());
 
-    let path = args.get_str("<path>");
-    let store = Storage::new(Path::new(&path));
-    let conf = Config::new(8080, store);
+    let config_path = Path::new(args.get_str("<config>"));
 
-    if args.get_bool("--init") {
-        storage::initialize(&conf)
-    }
+    println!("Using config file {:?}.", config_path);
 
-    webdav::start(&conf);
+    daemons::smtp::Daemon::new(&"127.0.0.1:8025".parse().unwrap()).run().unwrap();
 }

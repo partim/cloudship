@@ -1,14 +1,21 @@
 [package]
 name    = "cloudship"
-version = "0.1.0"
+version = "0.0.1"
 authors = ["Bjørn Nordbø <bn@strangedays.no>", "Martin Hoffmann <hn@nvnc.de>"]
 
 [dependencies]
-docopt  = "0.6.*"
-hyper   = "0.6.*"
-nickel  = "0.7.*"
-xml-rs  = "0.2"
+bytes		= "0.3"
+docopt  	= "0.6"
+env_logger	= "0.3"
+hyper		= "0.6"
+log		= "0.3"
+mio		= "0.5"
+nickel  	= "0.7"
+
+# Upstream tick currently can't do server-first protocols like SMTP
+tick		= { git = "https://github.com/partim/tick.git" }
+xml-rs  	= "0.2"
 
 [[bin]]
 name = "cloudship"
-doc = false
+doc  = false
