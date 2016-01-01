@@ -11,9 +11,7 @@ hyper		= "0.6"
 log		= "0.3"
 mio		= "0.5"
 nickel  	= "0.7"
-
-# Upstream tick currently can't do server-first protocols like SMTP
-tick		= { git = "https://github.com/partim/tick.git" }
+tick		= { git = "https://github.com/seanmonstar/tick.git" }
 xml-rs  	= "0.2"
 
 [[bin]]

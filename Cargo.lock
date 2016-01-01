@@ -9,7 +9,7 @@ dependencies = [
  "log 0.3.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "mio 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "nickel 0.7.3 (registry+https://github.com/rust-lang/crates.io-index)",
- "tick 0.0.1 (git+https://github.com/partim/tick.git)",
+ "tick 0.0.1 (git+https://github.com/seanmonstar/tick.git)",
  "xml-rs 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
@@ -415,7 +415,7 @@ dependencies = [
 [[package]]
 name = "tick"
 version = "0.0.1"
-source = "git+https://github.com/partim/tick.git#6a7ba0b9ff5f38b1d0d4881ae03af71855acde48"
+source = "git+https://github.com/seanmonstar/tick.git#2aee59e16f266b0e6cb98862012d3356ea5c5390"
 dependencies = [
  "log 0.3.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "mio 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
