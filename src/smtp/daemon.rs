@@ -235,7 +235,7 @@ fn has_crlf(buf: &[u8]) -> bool {
 fn read_line<F>(transport: &mut TcpStream, buf: &mut Vec<u8>, f: F)
              -> Option<State>
             where F: Fn(&[u8]) -> State {
-    // XXX For the moment we ignore trailing garbage. Not sur
+    // XXX For the moment we ignore trailing garbage. Not sure
     //     if that is smart. And too lazy to check the RFC.
     //
     match transport.try_read_buf(buf) {
@@ -253,3 +253,5 @@ fn read_line<F>(transport: &mut TcpStream, buf: &mut Vec<u8>, f: F)
         }
     }
 }
+
+

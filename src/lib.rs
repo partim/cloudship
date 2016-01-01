@@ -5,5 +5,5 @@ extern crate nickel;
 extern crate tick;
 extern crate xml;
 
-pub mod daemons;
+pub mod smtp;
 

@@ -5,7 +5,6 @@ extern crate env_logger;
 use docopt::Docopt;
 use std::env;
 use std::path::Path;
-use cloudship::daemons;
 
 static USAGE: &'static str = "
 Usage: cloudship <config>
@@ -22,5 +21,5 @@ fn main() {
 
     println!("Using config file {:?}.", config_path);
 
-    daemons::smtp::Daemon::new(&"127.0.0.1:8025".parse().unwrap()).run().unwrap();
+    cloudship::smtp::Daemon::new(&"127.0.0.1:8025".parse().unwrap()).run().unwrap();
 }
