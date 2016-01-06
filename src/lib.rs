@@ -6,4 +6,6 @@ extern crate nickel;
 extern crate tick;
 extern crate xml;
 
+#[macro_use] pub mod macros;
 pub mod smtp;
+pub mod util;
