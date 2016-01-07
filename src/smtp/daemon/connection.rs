@@ -1,10 +1,12 @@
 use std::io::{self, Cursor};
+use std::ptr;
 use bytes::{Buf};
 use mio::{TryRead, TryWrite};
 use mio::tcp::TcpStream;
-use tick::{self, Interest, Result};
+use tick::{self, Interest};
 use super::Config;
 use super::session::Session;
+use ::util::scribe::{Scribe, Scribble};
 
 
 /// A connection to an SMTP daemon
@@ -22,7 +24,7 @@ impl<'a> Connection<'a> {
             session: Session::new(config),
             direction: Direction::Reply,
             recv: RecvBuf::new(),
-            send: SendBuf::new(build_greeting(config)),
+            send: build_greeting(config),
         }
     }
 
@@ -155,9 +157,9 @@ pub struct SendBuf {
 }
 
 impl SendBuf {
-    fn new(vec: Vec<u8>) -> SendBuf {
+    fn new() -> SendBuf {
         SendBuf {
-            inner: Cursor::new(vec)
+            inner: Cursor::new(Vec::new())
         }
     }
 
@@ -177,20 +179,34 @@ impl SendBuf {
         }
     }
 
-    pub fn push(&mut self, data: &[u8]) {
-        self.inner.get_mut().extend(data)
+    pub fn len(&self) -> usize { self.inner.get_ref().len() }
+
+    pub fn update(&mut self, pos: usize, ch: u8) {
+        self.inner.get_mut()[pos] = ch
     }
 }
 
+impl Scribe for SendBuf {
+    fn scribble_bytes(&mut self, buf:&[u8]) {
+        let vec = self.inner.get_mut();
+        let len = vec.len();
+        vec.reserve(buf.len());
+        unsafe {
+            ptr::copy(buf.as_ptr(), vec.get_unchecked_mut(len), buf.len());
+            vec.set_len(len + buf.len());
+        }
+    }
+
+    fn scribble_octet(&mut self, v: u8) {
+        self.inner.get_mut().push(v);
+    }
+}
 
 //------------ Helpers ------------------------------------------------------
 
-fn build_greeting(config: &Config) -> Vec<u8> {
-    let mut res = Vec::new();
-    res.extend(b"220 ");
-    res.extend(&config.hostname);
-    res.extend(b" ESMTP ");
-    res.extend(&config.systemname);
-    res.extend(b"\r\n");
+fn build_greeting(config: &Config) -> SendBuf {
+    let mut res = SendBuf::new();
+    scribble!(&mut res, b"220 ", &config.hostname, b" ESMTP ",
+                        &config.systemname, b"\r\n");
     res
 }

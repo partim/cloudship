@@ -24,8 +24,12 @@ pub trait Scribe {
     /// Attach a `u8` slice to the end of the message.
     fn scribble_bytes(&mut self, buf: &[u8]);
 
-    /// Attach a single `u8` to the end of the message.
-    fn scribble_u8(&mut self, v: u8);
+    /// Attach a single byts as is to the end of the message.
+    ///
+    /// Note that this differs from `scribble_u8()` which attaches the
+    /// decimal representation of the value.
+    ///
+    fn scribble_octet(&mut self, v: u8);
 
 
     //--- Provided Methods
@@ -36,8 +40,8 @@ pub trait Scribe {
     ///
     fn scribble_bool(&mut self, v: bool) {
         match v {
-            true => self.scribble_u8(b'1'),
-            false => self.scribble_u8(b'0'),
+            true => self.scribble_octet(b'1'),
+            false => self.scribble_octet(b'0'),
         }
     }
 
@@ -48,16 +52,15 @@ pub trait Scribe {
     // All smaller types are implemented by casting to `u64`.
     //
     fn scribble_u64(&mut self, v: u64) {
-        match v / 10 {
-            0 => { },
-            u @ _ => {
-                self.scribble_u64(u);
-                self.scribble_u8((v % 10) as u8 + b'0')
-            }
+        let u = v / 10;
+        if u > 0 {
+            self.scribble_u64(u);
         }
+        self.scribble_octet((v % 10) as u8 + b'0')
     }
     fn scribble_u32(&mut self, v: u32) { self.scribble_u64(v as u64) }
     fn scribble_u16(&mut self, v: u16) { self.scribble_u64(v as u64) }
+    fn scribble_u8(&mut self, v: u8) { self.scribble_u64(v as u64) }
     fn scribble_usize(&mut self, v: usize) { self.scribble_u64(v as u64) }
 
     // Signed integers.
@@ -69,7 +72,7 @@ pub trait Scribe {
     //
     fn scribble_i64(&mut self, mut v: i64) {
         if v < 0 {
-            self.scribble_u8(b'-');
+            self.scribble_octet(b'-');
             v = -v;
         }
         self.scribble_u64(v as u64);
@@ -98,6 +101,9 @@ pub trait Scribble {
 }
 
 //--- Scribble implementations for primitive types
+//
+// There is no implementatin for u8 since these can be ambiguous.
+//
 
 macro_rules! impl_scribble {
     ($ty:ty, $method:ident) => {
@@ -114,7 +120,6 @@ impl_scribble!(bool, scribble_bool);
 impl_scribble!(u64, scribble_u64);
 impl_scribble!(u32, scribble_u32);
 impl_scribble!(u16, scribble_u16);
-impl_scribble!(u8, scribble_u8);
 impl_scribble!(usize, scribble_usize);
 impl_scribble!(i64, scribble_i64);
 impl_scribble!(i32, scribble_i32);
@@ -137,11 +142,3 @@ impl Scribble for str {
     }
 }
 
-
-//------------ scribble! ----------------------------------------------------
-
-macro_rules! scribble {
-    ($scribe:expr, $($item:expr),*) => {
-        $($scribe.scribble($item);)*
-    }
-}
