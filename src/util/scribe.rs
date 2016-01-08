@@ -102,7 +102,7 @@ pub trait Scribble {
 
 //--- Scribble implementations for primitive types
 //
-// There is no implementatin for u8 since these can be ambiguous.
+// There is no implementation for u8 since these can be ambiguous.
 //
 
 macro_rules! impl_scribble {

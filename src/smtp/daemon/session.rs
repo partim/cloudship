@@ -56,7 +56,10 @@ impl<'a> Session<'a> {
                    -> Direction {
         match self.state {
             State::Early => self.early(cmd, send, last),
-            _ => self.closing(cmd, send, last)
+            State::Session => self.session(cmd, send, last),
+            State::TransactionRcpt => self.transaction_rcpt(cmd, send, last),
+            State::Closing => self.closing(cmd, send, last),
+            _ => unreachable!()
         }
     }
 
@@ -67,11 +70,45 @@ impl<'a> Session<'a> {
     fn early(&mut self, cmd: Command, send: &mut SendBuf, last: bool)
                -> Direction {
         match cmd {
+            Command::Helo { domain } => self.hello(domain, send, last),
             Command::Ehlo { domain } => self.ehello(domain, send, last),
             Command::Quit => self.quit(send),
             _ => {
                 Reply::reply(send, 503, (5, 0, 3),
                              b"Please say hello first\r\n");
+                Direction::Reply
+            }
+        }
+    }
+
+    /// Process a command in `State::Session`.
+    ///
+    /// All non-transaction commands plus `MAIL` are allowed.
+    ///
+    fn session(&mut self, cmd: Command, send: &mut SendBuf, last: bool)
+               -> Direction {
+        match cmd {
+            Command::Helo { domain } => self.hello(domain, send, last),
+            Command::Ehlo { domain } => self.ehello(domain, send, last),
+            Command::Quit => self.quit(send),
+            _ => {
+                Reply::reply(send, 502, (5, 0, 2),
+                             b"Command not implemented\r\n");
+                Direction::Reply
+            }
+        }
+    }
+
+    /// Process a command in `State::TransactionRcpt`.
+    ///
+    /// Allowed commands are RCPT, DATA and BDAT.
+    ///
+    fn transaction_rcpt(&mut self, cmd: Command, send: &mut SendBuf,
+                        last: bool) -> Direction {
+        match cmd {
+            _ => {
+                Reply::reply(send, 503, (5, 0, 3),
+                             b"Only RCTP, DATA or BDAT allowed now\r\n");
                 Direction::Reply
             }
         }
@@ -96,16 +133,24 @@ impl<'a> Session<'a> {
 
     //--- Processing of Specific Commands
 
+    fn hello(&mut self, domain: &[u8], send: &mut SendBuf, last: bool)
+             -> Direction {
+        scribble!(&mut Reply::new(send, 205, None),
+                  &self.config.hostname, b"\r\n");
+        self.state = State::Session;
+        Direction::Reply
+    }
+
     fn ehello(&mut self, domain: &[u8], send: &mut SendBuf, last: bool)
               -> Direction {
-        let mut reply = Reply::new(send, 205, None);
-        scribble!(&mut reply,
+        scribble!(&mut Reply::new(send, 205, None),
                   &self.config.hostname,
                   b"\r\nEXPN\r\nHELP\r\n8BITMIME\r\nSIZE ",
                   self.config.message_size_limit,
                   b"\r\nCHUNKING\r\nBINARYMIME\r\nPIPELINING\r\nDSN\r\n\
                   ETRN\r\nENHANCEDSTATUSCODES\r\nSTARTTLS\r\nAUTH\r\n\
                   SMTPUTF8\r\n");
+        self.state = State::Session;
         Direction::Reply
     }
 

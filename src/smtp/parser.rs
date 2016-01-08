@@ -100,6 +100,10 @@ pub fn parse_command<'a>(i: &'a [u8]) -> IResult<&'a [u8], CommandResult<'a>> {
             map!(take_until_and_consume!(b"\r\n"), 
                    |res| Ok(Command::Ehlo { domain: res }))
         ) |
+        command!("HELO",
+            map!(take_until_and_consume!(b"\r\n"),
+                   |res| Ok(Command::Helo { domain: res }))
+        ) |
         empty_command!("QUIT", Command::Quit) |
         map!(take_until_and_consume!(b"\r\n"), |_| Err(CommandError::Syntax))
     )
