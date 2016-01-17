@@ -152,12 +152,6 @@ fn ipv6_comp_right(mut input: &[u8], max: usize)
             }
             _ => { return IResult::Done(input, (res, i + 1)); }
         }
-        if input[0] == b':' {
-            input = &input[1..]
-        }
-        else {
-            return IResult::Done(input, (res, i + 1))
-        }
     }
     return IResult::Done(input, (res, max))
 }
