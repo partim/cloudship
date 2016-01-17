@@ -1,8 +1,8 @@
 use nom::IResult;
 use super::Config;
 use super::connection::{Direction, RecvBuf, SendBuf};
-use super::super::parser::{parse_command, CommandError};
-use super::super::protocol::Command;
+use super::super::protocol::{Command, CommandError, Domain, ExpnParameters, 
+                             MailboxDomain, VrfyParameters, Word,};
 use ::util::scribe::{Scribe, Scribble};
 
 
@@ -26,7 +26,7 @@ impl<'a> Session<'a> {
     pub fn process(&mut self, recv: &mut RecvBuf, send: &mut SendBuf)
                    -> Direction {
         let len = recv.len();
-        let (advance, dir) = match parse_command(recv.as_slice()) {
+        let (advance, dir) = match Command::parse(recv.as_slice()) {
             IResult::Done(rest, Ok(cmd)) => {
                 (len - rest.len(), self.command(cmd, send, rest.len() == len))
             }
@@ -70,8 +70,14 @@ impl<'a> Session<'a> {
     fn early(&mut self, cmd: Command, send: &mut SendBuf, last: bool)
                -> Direction {
         match cmd {
-            Command::Helo { domain } => self.hello(domain, send, last),
-            Command::Ehlo { domain } => self.ehello(domain, send, last),
+            Command::Helo(domain) => self.hello(domain, send, last),
+            Command::Ehlo(domain) => self.ehello(domain, send, last),
+            Command::Vrfy(whom, params) => self.verify(whom, params, send,
+                                                       last),
+            Command::Expn(whom, params) => self.expand(whom, params, send,
+                                                       last),
+            Command::Help(what) => self.help(what, send, last),
+            Command::Noop | Command::Rset => self.noop(send),
             Command::Quit => self.quit(send),
             _ => {
                 Reply::reply(send, 503, (5, 0, 3),
@@ -88,8 +94,14 @@ impl<'a> Session<'a> {
     fn session(&mut self, cmd: Command, send: &mut SendBuf, last: bool)
                -> Direction {
         match cmd {
-            Command::Helo { domain } => self.hello(domain, send, last),
-            Command::Ehlo { domain } => self.ehello(domain, send, last),
+            Command::Helo(domain) => self.hello(domain, send, last),
+            Command::Ehlo(domain) => self.ehello(domain, send, last),
+            Command::Vrfy(whom, params) => self.verify(whom, params, send,
+                                                       last),
+            Command::Expn(whom, params) => self.expand(whom, params, send,
+                                                       last),
+            Command::Help(what) => self.help(what, send, last),
+            Command::Noop | Command::Rset => self.noop(send),
             Command::Quit => self.quit(send),
             _ => {
                 Reply::reply(send, 502, (5, 0, 2),
@@ -106,6 +118,11 @@ impl<'a> Session<'a> {
     fn transaction_rcpt(&mut self, cmd: Command, send: &mut SendBuf,
                         last: bool) -> Direction {
         match cmd {
+            Command::Vrfy(whom, params) => self.verify(whom, params, send,
+                                                       last),
+            Command::Expn(whom, params) => self.expand(whom, params, send,
+                                                       last),
+            Command::Help(what) => self.help(what, send, last),
             _ => {
                 Reply::reply(send, 503, (5, 0, 3),
                              b"Only RCTP, DATA or BDAT allowed now\r\n");
@@ -133,7 +150,7 @@ impl<'a> Session<'a> {
 
     //--- Processing of Specific Commands
 
-    fn hello(&mut self, domain: &[u8], send: &mut SendBuf, last: bool)
+    fn hello(&mut self, domain: Domain, send: &mut SendBuf, last: bool)
              -> Direction {
         scribble!(&mut Reply::new(send, 205, None),
                   &self.config.hostname, b"\r\n");
@@ -141,7 +158,7 @@ impl<'a> Session<'a> {
         Direction::Reply
     }
 
-    fn ehello(&mut self, domain: &[u8], send: &mut SendBuf, last: bool)
+    fn ehello(&mut self, domain: MailboxDomain, send: &mut SendBuf, last: bool)
               -> Direction {
         scribble!(&mut Reply::new(send, 205, None),
                   &self.config.hostname,
@@ -151,6 +168,34 @@ impl<'a> Session<'a> {
                   ETRN\r\nENHANCEDSTATUSCODES\r\nSTARTTLS\r\nAUTH\r\n\
                   SMTPUTF8\r\n");
         self.state = State::Session;
+        Direction::Reply
+    }
+
+    fn verify(&mut self, whom: Word, params: VrfyParameters,
+              send: &mut SendBuf, last: bool) -> Direction {
+        let _ = whom;
+        let _ = params;
+        Reply::reply(send, 252, (2, 5, 2),
+                     b"VRFY administratively disable\r\n");
+        Direction::Reply
+    }
+
+    fn expand(&mut self, whom: Word, params: ExpnParameters,
+              send: &mut SendBuf, last: bool) -> Direction {
+        Reply::reply(send, 252, (2, 5, 2),
+                     b"EXPN administratively disable\r\n");
+        Direction::Reply
+    }
+
+    fn help(&mut self, what: Option<Word>, send: &mut SendBuf, last: bool)
+            -> Direction {
+        Reply::reply(send, 250, (2, 5, 0),
+                     b"Some helpful text will appear here soon.\r\n");
+        Direction:: Reply
+    }
+
+    fn noop(&mut self, send: &mut SendBuf) -> Direction {
+        Reply::reply(send, 250, (2, 5, 0), b"OK\r\n");
         Direction::Reply
     }
 
@@ -180,12 +225,15 @@ enum State {
     /// A mail transaction's data is being received
     TransactionData,
 
+    /// A mail transaction's data is being received using the BDAT command
+    TransactionBdat,
+
     /// Something went wrong and we are waiting for QUIT
     Closing,
-
-    /// We will close the connection next
-    Closed,
 }
+
+
+//------------ MailTransaction ----------------------------------------------
 
 
 //------------ Reply --------------------------------------------------------
@@ -228,7 +276,7 @@ impl<'a> Reply<'a> {
 
     fn error(send: &mut SendBuf, err: CommandError) {
         match err {
-            CommandError::Syntax =>
+            CommandError::Unrecognized =>
                 Reply::reply(send, 500, (5, 0, 0),
                              b"Command unrecognized\r\n"),
             CommandError::Parameters => 

@@ -26,5 +26,4 @@
 pub use self::daemon::Daemon;
 
 pub mod daemon;
-pub mod parser;
 pub mod protocol;
