@@ -205,6 +205,10 @@ impl SendBuf {
     pub fn update(&mut self, pos: usize, ch: u8) {
         self.inner.get_mut()[pos] = ch
     }
+
+    pub fn is_empty(&self) -> bool {
+        (self.inner.get_ref().len() as u64) == self.inner.position()
+    }
 }
 
 impl Scribe for SendBuf {
@@ -226,7 +230,8 @@ impl Scribe for SendBuf {
 
 //------------ Helpers ------------------------------------------------------
 
-fn build_greeting<H: SessionHandler>(handler: &H) -> SendBuf {
+// TODO: Move this into Session.
+pub fn build_greeting<H: SessionHandler>(handler: &H) -> SendBuf {
     let mut res = SendBuf::new();
     scribble!(&mut res, b"220 ");
     handler.scribble_hostname(&mut res);
@@ -239,4 +244,72 @@ fn build_greeting<H: SessionHandler>(handler: &H) -> SendBuf {
 
 #[cfg(test)]
 mod test {
+    use smtp::daemon::session::Session;
+    use smtp::daemon::null::NullSession;
+    use super::*;
+
+    /// Like a regular connection but without all the tedious IO.
+    ///
+    pub struct TestConnection {
+        session: Session<NullSession>,
+        direction: Direction,
+        recv: RecvBuf,
+        send: SendBuf,
+        bcc: Vec<u8>,
+    }
+
+    impl TestConnection {
+        pub fn new() -> Self {
+            let handler = NullSession;
+            let send = build_greeting(&handler);
+            TestConnection {
+                session: Session::new(handler),
+                direction: Direction::Reply,
+                recv: RecvBuf::new(),
+                send: send,
+                bcc: Vec::new()
+            }
+        }
+
+        /// Send *data* to the session.
+        pub fn send(&mut self, data: &[u8]) {
+            let mut buf = ::bytes::ByteBuf::from_slice(data);
+            self.recv.try_read(&mut buf).unwrap();
+            for line in data.split(|ch| *ch == b'\n') {
+                if !line.is_empty() {
+                    self.bcc.extend_from_slice(b">>> C: ");
+                    self.bcc.extend_from_slice(line);
+                    self.bcc.push(b'\n');
+                }
+            }
+            self.direction = self.session.process(&mut self.recv,
+                                                  &mut self.send);
+        }
+
+        pub fn recv(&mut self) -> Vec<u8> {
+            let mut buf = Vec::new();
+            self.send.try_write(&mut buf).unwrap();
+            for line in buf.split(|ch| *ch == b'\n') {
+                if !line.is_empty() {
+                    self.bcc.extend_from_slice(b">>> S: ");
+                    self.bcc.extend_from_slice(line);
+                    self.bcc.push(b'\n');
+                }
+            }
+            buf
+        }
+
+        pub fn dump(&self) {
+            println!("{}", String::from_utf8_lossy(&self.bcc));
+        }
+    }
+
+    #[test]
+    fn test() {
+        let mut conn = TestConnection::new();
+        let _ = conn.recv();
+        conn.send(b"EHLO localhost.local\r\n");
+        let _ = conn.recv();
+        conn.dump();
+    }
 }
