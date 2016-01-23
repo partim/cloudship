@@ -6,8 +6,6 @@
 //! * HELP (defines the verb HELP, see RFC 5321)
 //! * 8BITMIME (defines the mail-parameter BODY, see RFC 6152)
 //! * SIZE (defines the mail-parameter SIZE, see RFC 1870)
-//! * CHUNKING (defines the verb BDAT as an alternative to DATA, see RFC 3030)
-//! * BINARYMIME (extends the mail-parameter BODY, see RFC 3030)
 //! * PIPELINING (RFC 2920)
 //! * DSN (defines the RET and ENVID mail-parameters and the NOTIFY and ORCPT
 //!   rctp-parameters, see RFC 3461)
@@ -26,4 +24,5 @@
 pub use self::daemon::Daemon;
 
 pub mod daemon;
+pub mod fs;
 pub mod protocol;

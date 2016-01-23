@@ -3,10 +3,11 @@
 
 pub use self::daemon::Daemon;
 
-mod connection;
-mod daemon;
-mod server;
-mod session;
+pub mod connection;
+pub mod daemon;
+pub mod handler;
+pub mod server;
+pub mod session;
 
 
 //------------ Config -------------------------------------------------------

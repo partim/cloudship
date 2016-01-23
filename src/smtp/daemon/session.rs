@@ -1,30 +1,76 @@
+use std::io::Write;
+use std::mem;
 use nom::IResult;
 use super::Config;
 use super::connection::{Direction, RecvBuf, SendBuf};
+use super::handler::{SessionHandler, MailTransaction, MailData};
 use super::super::protocol::{Command, CommandError, Domain, ExpnParameters, 
-                             MailboxDomain, VrfyParameters, Word,};
+                             MailboxDomain, MailParameters, RcptPath,
+                             RcptParameters, ReversePath, VrfyParameters,
+                             Word,};
 use ::util::scribe::{Scribe, Scribble};
-
 
 //------------ Session ------------------------------------------------------
 
 // An SMTP session on top of an SMTP connection
 //
-pub struct Session<'a> {
+pub struct Session<'a, H: SessionHandler> {
     config: &'a Config,
-    state: State,
+    state: State<H>,
+    handler: H,
 }
 
-impl<'a> Session<'a> {
-    pub fn new(config: &'a Config) -> Session<'a> {
+impl<'a, H: SessionHandler> Session<'a, H> {
+    pub fn new(config: &'a Config, handler: H) -> Session<'a, H> {
         Session {
             config: config,
             state: State::Early,
+            handler: handler,
         }
     }
 
     pub fn process(&mut self, recv: &mut RecvBuf, send: &mut SendBuf)
                    -> Direction {
+        if self.state.is_data() {
+            self.process_data(recv, send)
+        }
+        else {
+            self.process_command(recv, send)
+        }
+    }
+
+    fn process_data(&mut self, recv: &mut RecvBuf, send: &mut SendBuf)
+                    -> Direction {
+        let state = mem::replace(&mut self.state, State::Early);
+        let (state, direction) = match state {
+            State::MailData(mut data) => {
+                if let Some(idx) = recv.find_data_end() {
+                    // XXX What do we do when write fails?
+                    let _ = data.write(&recv.as_slice()[0..idx]);
+                    recv.advance(idx + 5);
+                    data.done(ProtoReply::new(send));
+                    self.state = State::Session;
+                    if recv.is_empty() {
+                        (State::Session, Direction::Reply)
+                    }
+                    else {
+                        (State::Session, Direction::Receive)
+                    }
+                }
+                else {
+                    // XXX What do we do when write fails?
+                    let _ = data.write(recv.as_slice());
+                    (State::MailData(data), Direction::Receive)
+                }
+            }
+            _ => unreachable!()
+        };
+        self.state = state;
+        direction
+    }
+
+    fn process_command(&mut self, recv: &mut RecvBuf, send: &mut SendBuf)
+                       -> Direction {
         let len = recv.len();
         let (advance, dir) = match Command::parse(recv.as_slice()) {
             IResult::Done(rest, Ok(cmd)) => {
@@ -43,7 +89,8 @@ impl<'a> Session<'a> {
         dir
     }
 
-    //--- Generic Command Processing
+
+    //--- Command Processing
 
     /// Process a command.
     ///
@@ -54,154 +101,182 @@ impl<'a> Session<'a> {
     ///
     pub fn command(&mut self, cmd: Command, send: &mut SendBuf, last: bool)
                    -> Direction {
-        match self.state {
-            State::Early => self.early(cmd, send, last),
-            State::Session => self.session(cmd, send, last),
-            State::TransactionRcpt => self.transaction_rcpt(cmd, send, last),
-            State::Closing => self.closing(cmd, send, last),
-            _ => unreachable!()
-        }
-    }
-
-    /// Process a command in `State::Early`.
-    ///
-    /// All non-transaction commands are allowed.
-    ///
-    fn early(&mut self, cmd: Command, send: &mut SendBuf, last: bool)
-               -> Direction {
+        debug!("Got command {:?}", cmd);
+        let pipeline = cmd.allow_pipeline();
+        let mut quit = false;
         match cmd {
-            Command::Helo(domain) => self.hello(domain, send, last),
-            Command::Ehlo(domain) => self.ehello(domain, send, last),
-            Command::Vrfy(whom, params) => self.verify(whom, params, send,
-                                                       last),
-            Command::Expn(whom, params) => self.expand(whom, params, send,
-                                                       last),
-            Command::Help(what) => self.help(what, send, last),
-            Command::Noop | Command::Rset => self.noop(send),
-            Command::Quit => self.quit(send),
-            _ => {
-                Reply::reply(send, 503, (5, 0, 3),
-                             b"Please say hello first\r\n");
-                Direction::Reply
-            }
+            Command::Ehlo(domain) => self.ehello(domain, send),
+            Command::Helo(domain) => self.hello(domain, send),
+            Command::Mail(path, params) => self.mail(path, params, send),
+            Command::Rcpt(path, params) => self.recipient(path, params, send),
+            Command::Data => self.data(send),
+            Command::Rset => self.reset(send),
+            Command::Vrfy(whom, params) => self.verify(whom, params, send),
+            Command::Expn(whom, params) => self.expand(whom, params, send),
+            Command::Help(what) => self.help(what, send),
+            Command::Noop => self.noop(send),
+            Command::Quit => { self.quit(send); quit = true }
+            Command::StartTls => self.start_tls(send),
+            Command::Auth{mechanism, initial} => self.auth(mechanism, initial,
+                                                           send),
         }
+        if quit { Direction::Closing }
+        else if last || !pipeline { Direction::Reply }
+        else { Direction::Receive }
     }
 
-    /// Process a command in `State::Session`.
-    ///
-    /// All non-transaction commands plus `MAIL` are allowed.
-    ///
-    fn session(&mut self, cmd: Command, send: &mut SendBuf, last: bool)
-               -> Direction {
-        match cmd {
-            Command::Helo(domain) => self.hello(domain, send, last),
-            Command::Ehlo(domain) => self.ehello(domain, send, last),
-            Command::Vrfy(whom, params) => self.verify(whom, params, send,
-                                                       last),
-            Command::Expn(whom, params) => self.expand(whom, params, send,
-                                                       last),
-            Command::Help(what) => self.help(what, send, last),
-            Command::Noop | Command::Rset => self.noop(send),
-            Command::Quit => self.quit(send),
-            _ => {
-                Reply::reply(send, 502, (5, 0, 2),
-                             b"Command not implemented\r\n");
-                Direction::Reply
-            }
-        }
-    }
-
-    /// Process a command in `State::TransactionRcpt`.
-    ///
-    /// Allowed commands are RCPT, DATA and BDAT.
-    ///
-    fn transaction_rcpt(&mut self, cmd: Command, send: &mut SendBuf,
-                        last: bool) -> Direction {
-        match cmd {
-            Command::Vrfy(whom, params) => self.verify(whom, params, send,
-                                                       last),
-            Command::Expn(whom, params) => self.expand(whom, params, send,
-                                                       last),
-            Command::Help(what) => self.help(what, send, last),
-            _ => {
-                Reply::reply(send, 503, (5, 0, 3),
-                             b"Only RCTP, DATA or BDAT allowed now\r\n");
-                Direction::Reply
-            }
-        }
-    }
-
-    /// Process a command in `State::Closing`.
-    ///
-    /// The only allowed command is `Command::Quit`. Everything else gets
-    /// a 503.
-    ///
-    fn closing(&mut self, cmd: Command, send: &mut SendBuf, last: bool)
-               -> Direction {
-        match cmd {
-            Command::Quit => self.quit(send),
-            _ => {
-                Reply::reply(send, 503, (5, 0, 3),
-                             b"Please leave now\r\n");
-                Direction::Reply
-            }
-        }
-    }
-
-    //--- Processing of Specific Commands
-
-    fn hello(&mut self, domain: Domain, send: &mut SendBuf, last: bool)
-             -> Direction {
+    // > S: 250
+    // > E: 504 (a conforming implementation could return this code only
+    // > in fairly obscure cases), 550, 502 (permitted only with an old-
+    // > style server that does not support EHLO)
+    fn hello(&mut self, domain: Domain, send: &mut SendBuf) {
+        self.handler.hello(MailboxDomain::Domain(domain));
         scribble!(&mut Reply::new(send, 205, None),
                   &self.config.hostname, b"\r\n");
         self.state = State::Session;
-        Direction::Reply
     }
 
-    fn ehello(&mut self, domain: MailboxDomain, send: &mut SendBuf, last: bool)
-              -> Direction {
+    // > S: 250
+    // > E: 504 (a conforming implementation could return this code only
+    // > in fairly obscure cases), 550, 502 (permitted only with an old-
+    // > style server that does not support EHLO)
+    fn ehello(&mut self, domain: MailboxDomain, send: &mut SendBuf) {
+        self.handler.hello(domain);
         scribble!(&mut Reply::new(send, 205, None),
                   &self.config.hostname,
                   b"\r\nEXPN\r\nHELP\r\n8BITMIME\r\nSIZE ",
                   self.config.message_size_limit,
-                  b"\r\nCHUNKING\r\nBINARYMIME\r\nPIPELINING\r\nDSN\r\n\
+                  b"\r\nPIPELINING\r\nDSN\r\n\
                   ETRN\r\nENHANCEDSTATUSCODES\r\nSTARTTLS\r\nAUTH\r\n\
                   SMTPUTF8\r\n");
         self.state = State::Session;
-        Direction::Reply
     }
 
+    // > S: 250
+    // > E: 552, 451, 452, 550, 553, 503, 455, 555
+    fn mail(&mut self, path: ReversePath, params: MailParameters,
+            send: &mut SendBuf) {
+        match self.state {
+            State::Session => {
+                match self.handler.mail(path, params, ProtoReply::new(send)) {
+                    None => {},
+                    Some(mail) => {
+                        self.state = State::MailRcpt(mail)
+                    }
+                }
+            }
+            State::Early => {
+                Reply::reply(send, 503, (5,5,1),
+                             b"Please say 'Hello' first\r\n");
+            }
+            State::Closing => {
+                Reply::reply(send, 503, (5,5,1), b"Please leave now\r\n");
+            }
+            _ => {
+                Reply::reply(send, 503, (5,5,1), b"Nested MAIL command\r\n");
+            }
+        }
+    }
+
+    // > S: 250, 251 (but see Section 3.4 for discussion of 251 and 551)
+    // > E: 550, 551, 552, 553, 450, 451, 452, 503, 455, 555
+    fn recipient(&mut self, path: RcptPath, params: RcptParameters,
+                 send: &mut SendBuf) {
+        let state = mem::replace(&mut self.state, State::Early);
+        self.state = match state {
+            State::MailRcpt(mut mail) => {
+                if mail.rcpt(path, params, ProtoReply::new(send)) {
+                    State::MailRcpt(mail)
+                } else {
+                    State::Session
+                }
+            }
+            State::Closing => {
+                Reply::reply(send, 503, (5,5,1), b"Please leave now\r\n");
+                state
+            }
+            _ => {
+                Reply::reply(send, 503, (5,5,1), b"Need MAIL first\r\n");
+                state
+            }
+        }
+    }
+
+    // > I: 354 -> data -> S: 250
+    // >                   E: 552, 554, 451, 452
+    // >                   E: 450, 550 (rejections for policy reasons)
+    // > E: 503, 554
+    fn data(&mut self, send: &mut SendBuf) {
+        let state = mem::replace(&mut self.state, State::Early);
+        self.state = match state {
+            State::MailRcpt(mut mail) => {
+                match mail.data() {
+                    None => {
+                        Reply::reply(send, 554, (5,5,0),
+                                     b"Transaction failed\r\n");
+                        State::Session
+                    }
+                    Some(queue) => {
+                        let mut reply = Reply::new(send, 354, None);
+                        scribble!(&mut reply, b"Go ahead.\r\n");
+                        State::MailData(queue)
+                    }
+                }
+            }
+            State::Closing => {
+                Reply::reply(send, 503, (5,5,1), b"Please leave now\r\n");
+                state
+            }
+            _ => {
+                Reply::reply(send, 503, (5,5,1), b"Need RCPT first\r\n");
+                state
+            }
+        }
+    }
+
+    // > S: 250
+    fn reset(&mut self, send: &mut SendBuf) {
+        Reply::reply(send, 250, (2,0,0), b"Ok\r\n");
+        self.state = State::Session;
+    }
+
+    // > S: 250, 251, 252
+    // > E: 550, 551, 553, 502, 504
     fn verify(&mut self, whom: Word, params: VrfyParameters,
-              send: &mut SendBuf, last: bool) -> Direction {
-        let _ = whom;
-        let _ = params;
-        Reply::reply(send, 252, (2, 5, 2),
-                     b"VRFY administratively disable\r\n");
-        Direction::Reply
+              send: &mut SendBuf) {
+        self.handler.verify(whom, params, ProtoReply::new(send));
     }
 
+    // > S: 250, 252
+    // > E: 550, 500, 502, 504
     fn expand(&mut self, whom: Word, params: ExpnParameters,
-              send: &mut SendBuf, last: bool) -> Direction {
-        Reply::reply(send, 252, (2, 5, 2),
-                     b"EXPN administratively disable\r\n");
-        Direction::Reply
+              send: &mut SendBuf) {
+        self.handler.expand(whom, params, ProtoReply::new(send));
     }
 
-    fn help(&mut self, what: Option<Word>, send: &mut SendBuf, last: bool)
-            -> Direction {
-        Reply::reply(send, 250, (2, 5, 0),
-                     b"Some helpful text will appear here soon.\r\n");
-        Direction:: Reply
+    // > S: 211, 214
+    // > E: 502, 504
+    fn help(&mut self, what: Option<Word>, send: &mut SendBuf) {
+        self.handler.help(what, ProtoReply::new(send));
     }
 
-    fn noop(&mut self, send: &mut SendBuf) -> Direction {
-        Reply::reply(send, 250, (2, 5, 0), b"OK\r\n");
-        Direction::Reply
+    // > S: 250
+    fn noop(&mut self, send: &mut SendBuf) {
+        Reply::reply(send, 250, (2, 0, 0), b"OK\r\n");
     }
 
-    fn quit(&mut self, send: &mut SendBuf) -> Direction {
+    // > S: 221
+    fn quit(&mut self, send: &mut SendBuf) {
         Reply::reply(send, 221, (2, 0, 0), b"Bye\r\n");
-        Direction::Closing
+    }
+
+    fn start_tls(&mut self, send: &mut SendBuf) {
+        let _ = send;
+    }
+
+    fn auth(&mut self, mechanism: &[u8], initial: Option<&[u8]>,
+            send: &mut SendBuf) {
+        let _ = (mechanism, initial, send);
     }
 }
 
@@ -210,8 +285,7 @@ impl<'a> Session<'a> {
 
 /// The state of an SMTP connection.
 ///
-#[derive(Debug)]
-enum State {
+enum State<H: SessionHandler> {
     /// No Hello has been received yet
     Early,
 
@@ -220,28 +294,53 @@ enum State {
 
     /// A mail transaction is beeing prepared (ie., we are collecting the
     /// RCPT commands)
-    TransactionRcpt,
+    MailRcpt(H::Mail),
 
     /// A mail transaction's data is being received
-    TransactionData,
-
-    /// A mail transaction's data is being received using the BDAT command
-    TransactionBdat,
+    MailData(<<H as SessionHandler>::Mail as MailTransaction>::Data),
 
     /// Something went wrong and we are waiting for QUIT
     Closing,
 }
 
-
-//------------ MailTransaction ----------------------------------------------
+impl<H: SessionHandler> State<H> {
+    fn is_data(&self) -> bool {
+        match *self {
+            State::MailData(_) => true,
+            _ => false
+        }
+    }
+}
 
 
 //------------ Reply --------------------------------------------------------
 
+/// A type that will become a reply.
+///
+#[derive(Debug)]
+pub struct ProtoReply<'a> {
+    buf: &'a mut SendBuf,
+}
+
+impl <'a> ProtoReply<'a> {
+    pub fn new(send: &'a mut SendBuf) -> Self {
+        ProtoReply { buf: send }
+    }
+
+    pub fn start(self, code: u16, status: Option<(u16, u16, u16)>)
+                 -> Reply<'a> {
+        Reply::new(self.buf, code, status)
+    }
+
+    pub fn reply(self, code: u16, status: (u16, u16, u16), buf: &[u8]) {
+        Reply::reply(self.buf, code, status, buf)
+    }
+}
+
 /// A type to help writing a reply.
 ///
 #[derive(Debug)]
-struct Reply<'a> {
+pub struct Reply<'a> {
     buf: &'a mut SendBuf,
     code: u16,
     status: Option<(u16, u16, u16)>,
@@ -277,7 +376,7 @@ impl<'a> Reply<'a> {
     fn error(send: &mut SendBuf, err: CommandError) {
         match err {
             CommandError::Unrecognized =>
-                Reply::reply(send, 500, (5, 0, 0),
+                Reply::reply(send, 500, (5, 5, 2),
                              b"Command unrecognized\r\n"),
             CommandError::Parameters => 
                 Reply::reply(send, 501, (5, 0, 1),

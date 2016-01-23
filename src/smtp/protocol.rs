@@ -1,3 +1,4 @@
+use std::fmt;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use nom::{IResult, ErrorKind, is_alphanumeric};
 use nom::IResult::{Done, Error, Incomplete};
@@ -76,9 +77,6 @@ pub enum Command<'a> {
     Noop,
     Quit,
 
-    // RFC 3030
-    Bdat { size: u64, last: bool },
-
     // RFC 3207
     StartTls,
 
@@ -126,22 +124,23 @@ impl<'a> Command<'a> {
                       map!(opt!(call!(Word::parse)), |res| Command::Help(res))
              ) |
              empty_command!(b"NOOP", Command::Noop) |
-             empty_command!(b"QUIT", Command::Noop) |
-             command!(b"BDAT",
-                      chain!(size: call!(u64_digits) ~
-                             last: opt!(chain!(wsps ~ call!(text, b"LAST"),
-                                               || ())),
-                             || Command::Bdat { size: size,
-                                                last: last.is_some() })
-             ) |
+             empty_command!(b"QUIT", Command::Quit) |
              empty_command!(b"STARTTLS", Command::StartTls) |
              command!(b"AUTH",
                       chain!(mechanism: call!(atom) ~ wsps ~
                              initial: opt!(call!(atom)),
                              || Command::Auth { mechanism: mechanism,
                                                 initial: initial })
-             )
+             ) |
+             map!(wspcrlf, |_| Err(CommandError::Unrecognized))
         )
+    }
+
+    pub fn allow_pipeline(&self) -> bool {
+        match *self {
+            Command::Mail(_,_) | Command::Rcpt(_,_) | Command::Rset => true,
+            _ => false
+        }
     }
 }
 
@@ -664,6 +663,29 @@ impl<'a> Domain<'a> {
     }
 }
 
+impl<'a> fmt::Display for Domain<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use std::ascii::AsciiExt;
+
+        if self.0.is_ascii() {
+            let s = unsafe { ::std::str::from_utf8_unchecked(self.0) };
+            try!(f.write_str(s));
+        }
+        else {
+            for chr in self.0.iter() {
+                if chr.is_ascii() {
+                    try!(write!(f, "{}", *chr as char));
+                }
+                else {
+                    try!(write!(f, "\\{:03}", *chr));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+
 fn sub_domain(input: &[u8]) -> IResult<&[u8], &[u8]> {
     let (output, _) = try_parse!(input, alpha_digit);
     let (output, _) = try_parse!(output, ldh_str);
@@ -692,6 +714,14 @@ impl<'a> MailboxDomain<'a> {
     }
 }
 
+impl<'a> fmt::Display for MailboxDomain<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            MailboxDomain::Domain(ref domain) => { domain.fmt(f) }
+            MailboxDomain::Address(ref addr) => { addr.fmt(f) }
+        }
+    }
+}
 
 //------------ Mailbox ------------------------------------------------------
 
@@ -818,7 +848,7 @@ impl<'a> Word<'a> {
 
 //------------ AdressLiteral ------------------------------------------------
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum AddressLiteral<'a> {
     Ipv4(Ipv4Addr),
     Ipv6(Ipv6Addr),
@@ -841,6 +871,28 @@ impl<'a> AddressLiteral<'a> {
     }
 }
 
+impl<'a> fmt::Display for AddressLiteral<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            AddressLiteral::Ipv4(ref addr) => {
+                try!(write!(f, "[{}]", addr));
+            }
+            AddressLiteral::Ipv6(ref addr) => {
+                try!(write!(f, "[IPv6:{}]", addr));
+            }
+            AddressLiteral::General{ref tag, ref content} => {
+                use std::str::from_utf8_unchecked;
+                let tag = unsafe { from_utf8_unchecked(tag) };
+                let content = unsafe { from_utf8_unchecked(content) };
+                try!(write!(f, "{}:{}", tag, content));
+            }
+        }
+        Ok(())
+    }
+}
+
+
+
 fn test_dcontent(chr: u8) -> Result<u8, ErrorKind> {
     if (chr >= 33 && chr <= 90) || (chr >= 94 && chr <= 126) {
         Ok(chr)
@@ -855,15 +907,45 @@ fn dcontents(input: &[u8]) -> IResult<&[u8], &[u8]> {
 }
 
 
-fn test_ldh_str(chr: u8) -> Result<u8, ErrorKind> {
+fn test_ldh_lead(chr: u8) -> Result<u8, ErrorKind> {
     if is_alphanumeric(chr) || chr == b'-' { Ok(chr) }
     else { Err(ErrorKind::Char) }
 }
 
-fn ldh_str(input: &[u8]) -> IResult<&[u8], &[u8]> {
-    let (output, _) = try_parse!(input, call!(opt_cat_chrs, test_ldh_str));
-    let (output, _) = try_parse!(output, alpha_digit);
-    let (left, right) = input.split_at(input.len() - output.len());
-    Done(right, left)
+/// Parses an Ldh-str.
+///
+/// ```abnf
+/// Let-dig        = ALPHA / DIGIT
+/// Ldh-str        = *( ALPHA / DIGIT / "-" ) Let-dig
+/// ```
+///
+/// This implementation is more generous and allows a `DIGIT` as last
+/// character, too. At least in the context of SMTP, this seems safe.
+///
+pub fn ldh_str(input: &[u8]) -> IResult<&[u8], &[u8]> {
+    cat_chrs(input, test_ldh_lead)
 }
 
+
+//============ Testing ======================================================
+
+#[cfg(test)]
+mod test {
+    use std::net::{Ipv4Addr, Ipv6Addr};
+    use nom::IResult::{Done, Incomplete, Error};
+    use super::*;
+
+    #[test]
+    pub fn address_literal_good() {
+        assert_eq!(AddressLiteral::parse(b"[127.0.0.1]"),
+                   Done(&b""[..],
+                        AddressLiteral::Ipv4(Ipv4Addr::new(127,0,0,1))));
+        assert_eq!(AddressLiteral::parse(b"[IPv6:::]"),
+                   Done(&b""[..],
+                        AddressLiteral::Ipv6(Ipv6Addr::new(0,0,0,0,0,0,0,0))));
+        assert_eq!(AddressLiteral::parse(b"[foo:bar]"),
+                   Done(&b""[..],
+                        AddressLiteral::General{tag: b"foo",
+                                                content: b"bar"}));
+    }
+}

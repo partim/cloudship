@@ -25,6 +25,7 @@ fn main() {
     println!("Using config file {:?}.", config_path);
     */
 
+    let handler = cloudship::smtp::fs::mta::Server::new("/tmp");
     cloudship::smtp::Daemon::new(&"127.0.0.1:8025".parse().unwrap(),
-                                 b"localhost.local").run().unwrap();
+                                 b"localhost.local").run(handler).unwrap();
 }

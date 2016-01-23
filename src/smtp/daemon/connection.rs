@@ -1,3 +1,4 @@
+use std::cmp::min;
 use std::io::{self, Cursor};
 use std::ptr;
 use bytes::{Buf};
@@ -5,31 +6,33 @@ use mio::{TryRead, TryWrite};
 use mio::tcp::TcpStream;
 use tick::{self, Interest};
 use super::Config;
+use super::handler::SessionHandler;
 use super::session::Session;
 use ::util::scribe::{Scribe, Scribble};
 
 
 /// A connection to an SMTP daemon
 ///
-pub struct Connection<'a> {
-    session: Session<'a>,
+pub struct Connection<'a, H: SessionHandler> {
+    session: Session<'a, H>,
     direction: Direction,
     recv: RecvBuf,
     send: SendBuf,
 }
 
-impl<'a> Connection<'a> {
-    fn new(config: &'a Config) -> Connection<'a> {
+impl<'a, H: SessionHandler> Connection<'a, H> {
+    fn new(config: &'a Config, handler: H) -> Connection<'a, H> {
         Connection {
-            session: Session::new(config),
+            session: Session::new(config, handler),
             direction: Direction::Reply,
             recv: RecvBuf::new(),
             send: build_greeting(config),
         }
     }
 
-    pub fn create(config: &'a Config) -> (Connection<'a>, Interest) {
-        let conn = Connection::new(config);
+    pub fn create(config: &'a Config, handler: H) -> (Connection<'a, H>,
+                                                      Interest) {
+        let conn = Connection::new(config, handler);
         let interest = conn.interest();
         (conn, interest)
     }
@@ -50,7 +53,7 @@ impl<'a> Connection<'a> {
     }
 }
 
-impl<'a> tick::Protocol<TcpStream> for Connection<'a> {
+impl<'a, H: SessionHandler> tick::Protocol<TcpStream> for Connection<'a, H> {
     fn on_readable(&mut self, transport: &mut TcpStream) -> Interest {
         match self.recv.try_read(transport) {
             Ok(Some(0)) => self.direction = Direction::Closed,
@@ -130,7 +133,10 @@ impl RecvBuf {
     }
 
     pub fn advance(&mut self, len: usize) {
-        self.rpos += len
+        self.rpos = min(self.inner.len(), self.rpos + len);
+        if self.is_empty() {
+            self.clear();
+        }
     }
 
     pub fn as_slice(&self) -> &[u8] {
@@ -143,6 +149,23 @@ impl RecvBuf {
 
     pub fn len(&self) -> usize {
         self.inner.len() - self.rpos
+    }
+
+    pub fn clear(&mut self) {
+        self.inner.clear();
+        self.rpos = 0;
+    }
+
+    /// Finds the index of `CRLF "." CRLF` in the buffer.
+    ///
+    pub fn find_data_end(&self) -> Option<usize> {
+        let slice = self.as_slice();
+        for i in 0..slice.len() - 5 {
+            if &slice[i..i+5] == b"\r\n.\r\n" {
+                return Some(i)
+            }
+        }
+        None
     }
 }
 

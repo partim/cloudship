@@ -3,6 +3,7 @@ extern crate bytes;
 extern crate mio;
 extern crate nickel;
 #[macro_use] extern crate nom;
+extern crate openssl;
 extern crate tick;
 extern crate xml;
 

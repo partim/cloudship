@@ -12,6 +12,7 @@ log		= "0.3"
 mio		= "0.5"
 nickel  	= "0.7"
 nom		= "1.0"
+openssl		= "0.6"
 tick		= { git = "https://github.com/seanmonstar/tick.git" }
 xml-rs  	= "0.2"
 
