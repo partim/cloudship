@@ -8,6 +8,7 @@ use smtp::protocol::{ExpnParameters, MailboxDomain, MailParameters,
 use smtp::daemon::handler::{ServerHandler, SessionHandler,
                             MailTransaction, MailData};
 use smtp::daemon::session::ProtoReply;
+use util::scribe::Scribe;
 
 pub struct NullServer;
 
@@ -27,6 +28,14 @@ impl SessionHandler for NullSession {
 
     fn hello<'a>(&mut self, domain: MailboxDomain<'a>) {
         let _ = domain;
+    }
+
+    fn scribble_hostname<S: Scribe>(&self, scribe: &mut S) {
+        scribble!(scribe, b"localhost.local");
+    }
+
+    fn message_size_limit(&self) -> u64 {
+        10485760u64
     }
 
     fn starttls(&mut self, peer_cert: X509) -> bool {

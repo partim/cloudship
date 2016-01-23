@@ -7,6 +7,7 @@ use smtp::protocol::{ExpnParameters, MailboxDomain, MailParameters,
                      RcptPath, RcptParameters, ReversePath, VrfyParameters,
                      Word}; 
 use smtp::daemon::session::ProtoReply;
+use util::scribe::Scribe;
 
 pub trait ServerHandler: Sized {
     type Session: SessionHandler;
@@ -19,6 +20,9 @@ pub trait SessionHandler: Sized {
 //    type Auth: SaslTransaction;
 
     fn hello<'a>(&mut self, domain: MailboxDomain<'a>);
+    fn scribble_hostname<S: Scribe>(&self, scribe: &mut S);
+    fn message_size_limit(&self) -> u64;
+
     fn starttls(&mut self, peer_cert: X509) -> bool;
   
 /*

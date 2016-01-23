@@ -22,8 +22,7 @@ impl<'a, H: ServerHandler> Server<'a, H> {
     }
 
     pub fn run(&mut self, handler: &H) -> tick::Result<()> {
-        let mut tick = Tick::new(|_| Connection::create(&self.config,
-                                                        handler.start()));
+        let mut tick = Tick::new(|_| Connection::create(handler.start()));
         let sock = try!(TcpListener::bind(&self.config.addr));
         try!(tick.accept(sock));
         info!("SMTP daemon listening on {}", &self.config.addr);

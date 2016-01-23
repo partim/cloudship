@@ -1,7 +1,6 @@
 use std::io::Write;
 use std::mem;
 use nom::IResult;
-use super::Config;
 use super::connection::{Direction, RecvBuf, SendBuf};
 use super::handler::{SessionHandler, MailTransaction, MailData};
 use super::super::protocol::{Command, CommandError, Domain, ExpnParameters, 
@@ -14,16 +13,14 @@ use ::util::scribe::{Scribe, Scribble};
 
 // An SMTP session on top of an SMTP connection
 //
-pub struct Session<'a, H: SessionHandler> {
-    config: &'a Config,
+pub struct Session<H: SessionHandler> {
     state: State<H>,
     handler: H,
 }
 
-impl<'a, H: SessionHandler> Session<'a, H> {
-    pub fn new(config: &'a Config, handler: H) -> Session<'a, H> {
+impl<H: SessionHandler> Session<H> {
+    pub fn new(handler: H) -> Self {
         Session {
-            config: config,
             state: State::Early,
             handler: handler,
         }
@@ -116,7 +113,7 @@ impl<'a, H: SessionHandler> Session<'a, H> {
             Command::Help(what) => self.help(what, send),
             Command::Noop => self.noop(send),
             Command::Quit => { self.quit(send); quit = true }
-            Command::StartTls => self.start_tls(send),
+            Command::StartTls => self.starttls(send),
             Command::Auth{mechanism, initial} => self.auth(mechanism, initial,
                                                            send),
         }
@@ -131,8 +128,9 @@ impl<'a, H: SessionHandler> Session<'a, H> {
     // > style server that does not support EHLO)
     fn hello(&mut self, domain: Domain, send: &mut SendBuf) {
         self.handler.hello(MailboxDomain::Domain(domain));
-        scribble!(&mut Reply::new(send, 205, None),
-                  &self.config.hostname, b"\r\n");
+        let mut reply = Reply::new(send, 205, None);
+        self.handler.scribble_hostname(&mut reply);
+        scribble!(&mut reply, b"\r\n");
         self.state = State::Session;
     }
 
@@ -142,10 +140,11 @@ impl<'a, H: SessionHandler> Session<'a, H> {
     // > style server that does not support EHLO)
     fn ehello(&mut self, domain: MailboxDomain, send: &mut SendBuf) {
         self.handler.hello(domain);
-        scribble!(&mut Reply::new(send, 205, None),
-                  &self.config.hostname,
+        let mut reply = Reply::new(send, 205, None);
+        self.handler.scribble_hostname(&mut reply);
+        scribble!(&mut reply,
                   b"\r\nEXPN\r\nHELP\r\n8BITMIME\r\nSIZE ",
-                  self.config.message_size_limit,
+                  self.handler.message_size_limit(),
                   b"\r\nPIPELINING\r\nDSN\r\n\
                   ETRN\r\nENHANCEDSTATUSCODES\r\nSTARTTLS\r\nAUTH\r\n\
                   SMTPUTF8\r\n");
@@ -270,7 +269,7 @@ impl<'a, H: SessionHandler> Session<'a, H> {
         Reply::reply(send, 221, (2, 0, 0), b"Bye\r\n");
     }
 
-    fn start_tls(&mut self, send: &mut SendBuf) {
+    fn starttls(&mut self, send: &mut SendBuf) {
         let _ = send;
     }
 

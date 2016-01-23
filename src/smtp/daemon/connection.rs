@@ -3,9 +3,7 @@ use std::io::{self, Cursor};
 use std::ptr;
 use bytes::{Buf};
 use mio::{TryRead, TryWrite};
-use mio::tcp::TcpStream;
-use tick::{self, Interest};
-use super::Config;
+use tick::{self, Interest, Transport};
 use super::handler::SessionHandler;
 use super::session::Session;
 use ::util::scribe::{Scribe, Scribble};
@@ -13,26 +11,26 @@ use ::util::scribe::{Scribe, Scribble};
 
 /// A connection to an SMTP daemon
 ///
-pub struct Connection<'a, H: SessionHandler> {
-    session: Session<'a, H>,
+pub struct Connection<H: SessionHandler> {
+    session: Session<H>,
     direction: Direction,
     recv: RecvBuf,
     send: SendBuf,
 }
 
-impl<'a, H: SessionHandler> Connection<'a, H> {
-    fn new(config: &'a Config, handler: H) -> Connection<'a, H> {
+impl<H: SessionHandler> Connection<H> {
+    fn new(handler: H) -> Self {
+        let send = build_greeting(&handler);
         Connection {
-            session: Session::new(config, handler),
+            session: Session::new(handler),
             direction: Direction::Reply,
             recv: RecvBuf::new(),
-            send: build_greeting(config),
+            send: send,
         }
     }
 
-    pub fn create(config: &'a Config, handler: H) -> (Connection<'a, H>,
-                                                      Interest) {
-        let conn = Connection::new(config, handler);
+    pub fn create(handler: H) -> (Connection<H>, Interest) {
+        let conn = Connection::new(handler);
         let interest = conn.interest();
         (conn, interest)
     }
@@ -53,8 +51,8 @@ impl<'a, H: SessionHandler> Connection<'a, H> {
     }
 }
 
-impl<'a, H: SessionHandler> tick::Protocol<TcpStream> for Connection<'a, H> {
-    fn on_readable(&mut self, transport: &mut TcpStream) -> Interest {
+impl<H: SessionHandler, T: Transport> tick::Protocol<T> for Connection<H> {
+    fn on_readable(&mut self, transport: &mut T) -> Interest {
         match self.recv.try_read(transport) {
             Ok(Some(0)) => self.direction = Direction::Closed,
             Ok(Some(_)) => self.process_read(),
@@ -68,7 +66,7 @@ impl<'a, H: SessionHandler> tick::Protocol<TcpStream> for Connection<'a, H> {
         self.interest()
     }
 
-    fn on_writable(&mut self, transport: &mut TcpStream) -> Interest {
+    fn on_writable(&mut self, transport: &mut T) -> Interest {
         match self.send.try_write(transport) {
             Ok(true) => {
                 self.direction = match self.direction {
@@ -127,7 +125,7 @@ impl RecvBuf {
         }
     }
 
-    fn try_read(&mut self, transport: &mut TcpStream)
+    fn try_read<T: TryRead>(&mut self, transport: &mut T)
                 -> io::Result<Option<usize>> {
         transport.try_read_buf(&mut self.inner)
     }
@@ -187,7 +185,7 @@ impl SendBuf {
     }
 
     // Ok(true) .. we are done, Ok(false) .. keep writing
-    fn try_write(&mut self, transport: &mut TcpStream)
+    fn try_write<T: TryWrite>(&mut self, transport: &mut T)
                 -> io::Result<bool> {
         match try!(transport.try_write_buf(&mut self.inner)) {
             Some(_) => {
@@ -225,11 +223,20 @@ impl Scribe for SendBuf {
     }
 }
 
+
 //------------ Helpers ------------------------------------------------------
 
-fn build_greeting(config: &Config) -> SendBuf {
+fn build_greeting<H: SessionHandler>(handler: &H) -> SendBuf {
     let mut res = SendBuf::new();
-    scribble!(&mut res, b"220 ", &config.hostname, b" ESMTP ",
-                        &config.systemname, b"\r\n");
+    scribble!(&mut res, b"220 ");
+    handler.scribble_hostname(&mut res);
+    scribble!(&mut res, b" ESMTP Cloudship\r\n");
     res
+}
+
+
+//============ Testing ======================================================
+
+#[cfg(test)]
+mod test {
 }

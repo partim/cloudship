@@ -932,11 +932,11 @@ pub fn ldh_str(input: &[u8]) -> IResult<&[u8], &[u8]> {
 #[cfg(test)]
 mod test {
     use std::net::{Ipv4Addr, Ipv6Addr};
-    use nom::IResult::{Done, Incomplete, Error};
+    use nom::IResult::Done;
     use super::*;
 
     #[test]
-    pub fn address_literal_good() {
+    fn address_literal_good() {
         assert_eq!(AddressLiteral::parse(b"[127.0.0.1]"),
                    Done(&b""[..],
                         AddressLiteral::Ipv4(Ipv4Addr::new(127,0,0,1))));
