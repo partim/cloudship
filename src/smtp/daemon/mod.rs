@@ -6,6 +6,7 @@ pub use self::daemon::Daemon;
 pub mod connection;
 pub mod daemon;
 pub mod handler;
+pub mod null;
 pub mod server;
 pub mod session;
 

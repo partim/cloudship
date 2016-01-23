@@ -43,11 +43,11 @@ pub trait MailTransaction: Sized {
     fn rcpt<'a>(&mut self, path: RcptPath<'a>, params: RcptParameters<'a>,
                 reply: ProtoReply) -> bool;
     fn data(&mut self) -> Option<Self::Data>;
-    fn rset(self);
+    fn rset(self) { }
 }
 
 pub trait MailData: Write + Sized {
-    fn rset(self);
+    fn rset(self) { }
     fn done(self, reply: ProtoReply);
 }
 

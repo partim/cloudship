@@ -17,6 +17,8 @@
 //!
 //! This implementation may later support these extensions:
 //!
+//! * BINARYMIME (see RFC 3030)
+//! * CHUNKING (see RFC 3030)
 //! * DELIVERBY (see RFC 2852)
 //! * BURL (see RFC 4468)
 //! * FUTURERELEASE (see RFC 4865)
@@ -24,5 +26,5 @@
 pub use self::daemon::Daemon;
 
 pub mod daemon;
-pub mod fs;
+//pub mod fs;
 pub mod protocol;
