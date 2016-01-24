@@ -209,6 +209,16 @@ impl SendBuf {
     pub fn is_empty(&self) -> bool {
         (self.inner.get_ref().len() as u64) == self.inner.position()
     }
+
+    pub fn as_slice(&self) -> &[u8] {
+        &self.inner.get_ref()[self.inner.position() as usize..]
+    }
+
+    pub fn advance(&mut self, by: usize) {
+        use std::io::Seek;
+        let _ = self.inner.seek(::std::io::SeekFrom::Current(by as i64))
+                          .unwrap();
+    }
 }
 
 impl Scribe for SendBuf {
@@ -244,8 +254,10 @@ pub fn build_greeting<H: SessionHandler>(handler: &H) -> SendBuf {
 
 #[cfg(test)]
 mod test {
+    use nom::IResult::Done;
     use smtp::daemon::session::Session;
     use smtp::daemon::null::NullSession;
+    use smtp::protocol::Reply;
     use super::*;
 
     /// Like a regular connection but without all the tedious IO.
@@ -286,6 +298,7 @@ mod test {
                                                   &mut self.send);
         }
 
+        /*
         pub fn recv(&mut self) -> Vec<u8> {
             let mut buf = Vec::new();
             self.send.try_write(&mut buf).unwrap();
@@ -298,6 +311,46 @@ mod test {
             }
             buf
         }
+        */
+
+        pub fn advance_send(&mut self, len: usize) {
+            for line in self.send.as_slice()[..len].split(|ch| *ch == b'\n') {
+                if !line.is_empty() {
+                    self.bcc.extend_from_slice(b">>> S: ");
+                    self.bcc.extend_from_slice(line);
+                    self.bcc.push(b'\n');
+                }
+            }
+            self.send.advance(len);
+        }
+
+        pub fn recv_reply(&mut self) -> Result<Reply, ()> {
+            let len;
+            let res;
+            {
+                let slice = self.send.as_slice();
+                match Reply::parse(slice) {
+                    Done(rest, right) => {
+                        len = slice.len() - rest.len();
+                        res=right
+                    }
+                    _ => { return Err(()) }
+                }
+            }
+            self.advance_send(len);
+            Ok(res)
+        }
+
+        pub fn assert_reply(&mut self, code: u16,
+                            status: Option<(u16, u16, u16)>) {
+            match self.recv_reply() {
+                Ok(reply) => {
+                    assert_eq!(reply.code, code);
+                    assert_eq!(reply.status, status);
+                }
+                Err(()) => { panic!("No reply") }
+            }
+        }
 
         pub fn dump(&self) {
             println!("{}", String::from_utf8_lossy(&self.bcc));
@@ -307,9 +360,9 @@ mod test {
     #[test]
     fn test() {
         let mut conn = TestConnection::new();
-        let _ = conn.recv();
+        conn.assert_reply(220, None);
         conn.send(b"EHLO localhost.local\r\n");
-        let _ = conn.recv();
+        conn.assert_reply(250, None);
         conn.dump();
     }
 }

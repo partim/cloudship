@@ -140,7 +140,7 @@ impl<H: SessionHandler> Session<H> {
     // > style server that does not support EHLO)
     fn ehello(&mut self, domain: MailboxDomain, send: &mut SendBuf) {
         self.handler.hello(domain);
-        let mut reply = Reply::new(send, 205, None);
+        let mut reply = Reply::new(send, 250, None);
         self.handler.scribble_hostname(&mut reply);
         scribble!(&mut reply,
                   b"\r\nEXPN\r\nHELP\r\n8BITMIME\r\nSIZE ",

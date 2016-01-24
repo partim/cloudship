@@ -954,7 +954,7 @@ impl Reply {
         Reply { code: code, status: status, text: text }
     }
 
-    pub fn parse(input: &[u8]) -> IResult<&[u8], Reply> {
+    pub fn parse(mut input: &[u8]) -> IResult<&[u8], Reply> {
         let (rest, (mut res, sep)) = try_parse!(input,
             chain!(code: call!(three_digits) ~
                    sep: alt!(call!(chr, b' ') | call!(chr, b'-')) ~
@@ -967,14 +967,16 @@ impl Reply {
             Done(rest, res)
         }
         else {
+            input = rest;
             loop {
                 res.text.extend_from_slice(b"\r\n");
-                let (rest, (sep, text)) = try_parse!(rest,
+                let (rest, (sep, text)) = try_parse!(input,
                     chain!(call!(three_digits) ~
                            sep: alt!(call!(chr, b' ') | call!(chr, b'-')) ~
                            opt!(call!(enhanced_status)) ~
                            text: take_until_and_consume!(b"\r\n"),
                            || (sep, text)));
+                input = rest;
                 res.text.extend_from_slice(text);
                 if sep == b' ' {
                     return Done(rest, res)
@@ -1043,5 +1045,18 @@ mod test {
                    Done(&b""[..],
                         Reply::new(250, Some((2,2,1)),
                                    b"Ok\r\nOk".to_vec())));
+        assert_eq!(Reply::parse(b"250-2.2.1 Ok\r\n\
+                                  250-2.2.1 Ok\r\n\
+                                  250 2.2.1 Ok\r\n"),
+                   Done(&b""[..],
+                        Reply::new(250, Some((2,2,1)),
+                                   b"Ok\r\nOk\r\nOk".to_vec())));
+
+        assert_eq!(Reply::parse(b"250 Ok\r\n"),
+                   Done(&b""[..],
+                        Reply::new(250, None, b"Ok".to_vec())));
+        assert_eq!(Reply::parse(b"250-Ok\r\n250-Ok\r\n250 Ok\r\n"),
+                   Done(&b""[..],
+                        Reply::new(250, None, b"Ok\r\nOk\r\nOk".to_vec())));
     }
 }
