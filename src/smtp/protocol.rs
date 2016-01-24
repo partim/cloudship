@@ -2,8 +2,9 @@ use std::fmt;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use nom::{IResult, ErrorKind, is_alphanumeric};
 use nom::IResult::{Done, Error, Incomplete};
-use ::util::abnf::core::{alpha_digit, cat_chr, cat_chrs, chr, opt_cat_chrs,
-                         opt_wsps, text, u64_digits, wspcrlf, wsps};
+use ::util::abnf::core::{alpha_digit, cat_chr, cat_chrs, chr, digit, 
+                         opt_cat_chrs, opt_wsps, text, three_digits,
+                         u64_digits, wspcrlf, wsp, wsps};
 
 //------------ Macros -------------------------------------------------------
 
@@ -927,6 +928,90 @@ pub fn ldh_str(input: &[u8]) -> IResult<&[u8], &[u8]> {
 }
 
 
+//------------ Reply --------------------------------------------------------
+
+/// A SMTP reply.
+///
+/// ```abnf
+/// Reply-line     = *( Reply-code "-" [ textstring ] CRLF )
+///                  Reply-code [ SP textstring ] CRLF
+/// textstring     = 1*(%d09 / %d32-126) ; HT, SP, Printable US-ASCII
+/// Reply-code     = %x32-35 %x30-35 %x30-39
+/// ```
+/// 
+/// This also processes enhanced status codes.
+///
+#[derive(Debug, PartialEq)]
+pub struct Reply {
+    pub code: u16,
+    pub status: Option<(u16, u16, u16)>,
+    pub text: Vec<u8>
+}
+
+impl Reply {
+    pub fn new(code: u16, status: Option<(u16, u16, u16)>, text: Vec<u8>) 
+               -> Self {
+        Reply { code: code, status: status, text: text }
+    }
+
+    pub fn parse(input: &[u8]) -> IResult<&[u8], Reply> {
+        let (rest, (mut res, sep)) = try_parse!(input,
+            chain!(code: call!(three_digits) ~
+                   sep: alt!(call!(chr, b' ') | call!(chr, b'-')) ~
+                   status: opt!(call!(enhanced_status)) ~
+                   text: take_until_and_consume!(b"\r\n"),
+                   || (Reply { code: code, status: status,
+                               text: text.to_vec() },
+                       sep)));
+        if sep == b' ' {
+            Done(rest, res)
+        }
+        else {
+            loop {
+                res.text.extend_from_slice(b"\r\n");
+                let (rest, (sep, text)) = try_parse!(rest,
+                    chain!(call!(three_digits) ~
+                           sep: alt!(call!(chr, b' ') | call!(chr, b'-')) ~
+                           opt!(call!(enhanced_status)) ~
+                           text: take_until_and_consume!(b"\r\n"),
+                           || (sep, text)));
+                res.text.extend_from_slice(text);
+                if sep == b' ' {
+                    return Done(rest, res)
+                }
+            }
+        }
+    }
+}
+
+fn enhanced_status(input: &[u8]) -> IResult<&[u8], (u16, u16, u16)> {
+    let (input, first) = try_parse!(input, call!(digit));
+    let (input, _) = try_parse!(input, call!(chr, b'.'));
+    let (input, second) = try_parse!(input, call!(status_component));
+    let (input, _) = try_parse!(input, call!(chr, b'.'));
+    let (input, third) = try_parse!(input, call!(status_component));
+    let (input, _) = try_parse!(input, wsp);
+    return Done(input, (first as u16, second, third))
+}
+
+fn status_component(mut input: &[u8]) -> IResult<&[u8], u16> {
+    let mut res = 0u16;
+    for i in 0..3 {
+        match digit(input) {
+            Incomplete(n) => { return Incomplete(n) }
+            Done(rest, chr) => {
+                input = rest;
+                res = res * 10 + (chr as u16);
+            }
+            Error(e) => {
+                if i == 0 { return Error(e) }
+                else { break }
+            }
+        }
+    }
+    return Done(input, res)
+}
+
 //============ Testing ======================================================
 
 #[cfg(test)]
@@ -947,5 +1032,16 @@ mod test {
                    Done(&b""[..],
                         AddressLiteral::General{tag: b"foo",
                                                 content: b"bar"}));
+    }
+
+    #[test]
+    fn reply_good() {
+        assert_eq!(Reply::parse(b"250 2.2.1 Ok\r\n"),
+                   Done(&b""[..],
+                        Reply::new(250, Some((2,2,1)), b"Ok".to_vec())));
+        assert_eq!(Reply::parse(b"250-2.2.1 Ok\r\n250 2.2.1 Ok\r\n"),
+                   Done(&b""[..],
+                        Reply::new(250, Some((2,2,1)),
+                                   b"Ok\r\nOk".to_vec())));
     }
 }

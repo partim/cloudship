@@ -289,6 +289,18 @@ pub fn u64_digits(input: &[u8]) -> IResult<u64> {
     }
 }
 
+/// Parses `3DIGIT` into an `u16`.
+///
+pub fn three_digits(mut input: &[u8]) -> IResult<u16> {
+    let mut res = 0u16;
+    for _ in 0..3 {
+        let (rest, d) = try_parse!(input, call!(digit));
+        res = res * 10 + (d as u16);
+        input = rest
+    }
+    Done(input, res)
+}
+
 /// Parses DQUOTE
 ///
 pub fn dquote(input: &[u8]) -> IResult<u8> {
