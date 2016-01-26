@@ -8,5 +8,6 @@ extern crate tick;
 extern crate xml;
 
 #[macro_use] pub mod macros;
+pub mod net;
 pub mod smtp;
 pub mod util;

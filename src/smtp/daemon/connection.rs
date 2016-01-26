@@ -270,14 +270,15 @@ mod test {
     impl TestConnection {
         pub fn new() -> Self {
             let handler = NullSession;
-            let send = build_greeting(&handler);
-            TestConnection {
+            let mut res = TestConnection {
                 session: Session::new(handler),
                 direction: Direction::Reply,
                 recv: RecvBuf::new(),
-                send: send,
+                send: SendBuf::new(),
                 bcc: Vec::new()
-            }
+            };
+            res.session.start(&mut res.send);
+            res
         }
 
         /// Send *data* to the session.
