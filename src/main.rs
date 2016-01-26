@@ -1,6 +1,9 @@
 extern crate cloudship;
 extern crate docopt;
 extern crate env_logger;
+extern crate openssl;
+
+use openssl::ssl;
 
 /*
 use docopt::Docopt;
@@ -26,6 +29,7 @@ fn main() {
     */
 
     let handler = cloudship::smtp::daemon::null::NullServer;
-    cloudship::smtp::Daemon::new(&"127.0.0.1:8025".parse().unwrap(),
-                                 b"localhost.local").run(handler).unwrap();
+    let ctx = ssl::SslContext::new(ssl::SslMethod::Tlsv1).unwrap();
+    cloudship::smtp::Server::new("127.0.0.1:8025".parse().unwrap(), ctx)
+                            .run(handler).unwrap();
 }

@@ -23,7 +23,7 @@
 //! * BURL (see RFC 4468)
 //! * FUTURERELEASE (see RFC 4865)
 //!
-pub use self::daemon::Daemon;
+pub use self::daemon::Server;
 
 pub mod daemon;
 //pub mod fs;
