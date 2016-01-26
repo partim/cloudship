@@ -26,6 +26,12 @@ impl<H: SessionHandler> Session<H> {
         }
     }
 
+    pub fn start(&self, send: &mut SendBuf) -> Direction {
+        scribble!(send, b"220 ", self.handler.hostname(), 
+                  b" ESMTP ", self.handler.systemname(), b"\r\n");
+        Direction::Reply
+    }
+
     pub fn process(&mut self, recv: &mut RecvBuf, send: &mut SendBuf)
                    -> Direction {
         if self.state.is_data() {
@@ -100,8 +106,12 @@ impl<H: SessionHandler> Session<H> {
                    -> Direction {
         debug!("Got command {:?}", cmd);
         let pipeline = cmd.allow_pipeline();
-        let mut quit = false;
         match cmd {
+            // These are special
+            Command::Quit => { return self.quit(send) }
+            Command::StartTls => { return self.starttls(send) }
+
+            // These are not
             Command::Ehlo(domain) => self.ehello(domain, send),
             Command::Helo(domain) => self.hello(domain, send),
             Command::Mail(path, params) => self.mail(path, params, send),
@@ -112,13 +122,10 @@ impl<H: SessionHandler> Session<H> {
             Command::Expn(whom, params) => self.expand(whom, params, send),
             Command::Help(what) => self.help(what, send),
             Command::Noop => self.noop(send),
-            Command::Quit => { self.quit(send); quit = true }
-            Command::StartTls => self.starttls(send),
             Command::Auth{mechanism, initial} => self.auth(mechanism, initial,
                                                            send),
         }
-        if quit { Direction::Closing }
-        else if last || !pipeline { Direction::Reply }
+        if last || !pipeline { Direction::Reply }
         else { Direction::Receive }
     }
 
@@ -129,8 +136,7 @@ impl<H: SessionHandler> Session<H> {
     fn hello(&mut self, domain: Domain, send: &mut SendBuf) {
         self.handler.hello(MailboxDomain::Domain(domain));
         let mut reply = Reply::new(send, 205, None);
-        self.handler.scribble_hostname(&mut reply);
-        scribble!(&mut reply, b"\r\n");
+        scribble!(&mut reply, self.handler.hostname(), b"\r\n");
         self.state = State::Session;
     }
 
@@ -141,13 +147,19 @@ impl<H: SessionHandler> Session<H> {
     fn ehello(&mut self, domain: MailboxDomain, send: &mut SendBuf) {
         self.handler.hello(domain);
         let mut reply = Reply::new(send, 250, None);
-        self.handler.scribble_hostname(&mut reply);
-        scribble!(&mut reply,
+        scribble!(&mut reply, self.handler.hostname(),
                   b"\r\nEXPN\r\nHELP\r\n8BITMIME\r\nSIZE ",
                   self.handler.message_size_limit(),
                   b"\r\nPIPELINING\r\nDSN\r\n\
-                  ETRN\r\nENHANCEDSTATUSCODES\r\nSTARTTLS\r\nAUTH\r\n\
+                  ETRN\r\nENHANCEDSTATUSCODES\r\nSTARTTLS\r\n\
                   SMTPUTF8\r\n");
+        self.handler.auth_mechanisms().map(|iter| {
+            scribble!(&mut reply, b"AUTH");
+            for mechanism in iter {
+                scribble!(&mut reply, b" ", mechanism);
+            }
+            scribble!(&mut reply, b"\r\n");
+        });
         self.state = State::Session;
     }
 
@@ -265,12 +277,17 @@ impl<H: SessionHandler> Session<H> {
     }
 
     // > S: 221
-    fn quit(&mut self, send: &mut SendBuf) {
+    fn quit(&mut self, send: &mut SendBuf) -> Direction {
         Reply::reply(send, 221, (2, 0, 0), b"Bye\r\n");
+        Direction::Closing
     }
 
-    fn starttls(&mut self, send: &mut SendBuf) {
-        let _ = send;
+    // > S: 220 (2.7.0)
+    // > E: 501 (no parameters allowed),
+    // >    454 (TLS not available due to temporary reason)
+    fn starttls(&mut self, send: &mut SendBuf) -> Direction {
+        Reply::reply(send, 220, (2, 7, 0), b"Ready to start TLS\r\n");
+        Direction::StartTls
     }
 
     fn auth(&mut self, mechanism: &[u8], initial: Option<&[u8]>,

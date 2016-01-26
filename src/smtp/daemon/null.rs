@@ -1,6 +1,7 @@
 //! Trait implementations that just throw away data.
 
 use std::io::{self, Write};
+use std::iter::Empty;
 use openssl::x509::X509;
 use smtp::protocol::{ExpnParameters, MailboxDomain, MailParameters,
                      RcptPath, RcptParameters, ReversePath, VrfyParameters,
@@ -8,7 +9,6 @@ use smtp::protocol::{ExpnParameters, MailboxDomain, MailParameters,
 use smtp::daemon::handler::{ServerHandler, SessionHandler,
                             MailTransaction, MailData};
 use smtp::daemon::session::ProtoReply;
-use util::scribe::Scribe;
 
 pub struct NullServer;
 
@@ -25,18 +25,15 @@ pub struct NullSession;
 
 impl SessionHandler for NullSession {
     type Mail = NullTransaction;
+    type MechanismIter = Empty<&'static [u8]>;
 
     fn hello<'a>(&mut self, domain: MailboxDomain<'a>) {
         let _ = domain;
     }
 
-    fn scribble_hostname<S: Scribe>(&self, scribe: &mut S) {
-        scribble!(scribe, b"localhost.local");
-    }
-
-    fn message_size_limit(&self) -> u64 {
-        10485760u64
-    }
+    fn hostname(&self) -> &[u8] { b"localhost.local" }
+    fn message_size_limit(&self) -> u64 { 10485760u64 }
+    fn auth_mechanisms(&self) -> Option<Self::MechanismIter> { None }
 
     fn starttls(&mut self, peer_cert: X509) -> bool {
         let _ = peer_cert;

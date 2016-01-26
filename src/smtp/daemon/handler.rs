@@ -1,13 +1,13 @@
 //! Traits for handling SMTP sessions.
 
 use std::io::Write;
+use std::iter::Iterator;
 use std::marker::Sized;
 use openssl::x509::X509;
 use smtp::protocol::{ExpnParameters, MailboxDomain, MailParameters,
                      RcptPath, RcptParameters, ReversePath, VrfyParameters,
                      Word}; 
 use smtp::daemon::session::ProtoReply;
-use util::scribe::Scribe;
 
 pub trait ServerHandler: Sized {
     type Session: SessionHandler;
@@ -17,11 +17,14 @@ pub trait ServerHandler: Sized {
 
 pub trait SessionHandler: Sized {
     type Mail: MailTransaction;
-//    type Auth: SaslTransaction;
+    type MechanismIter: Iterator<Item=&'static [u8]>;
 
     fn hello<'a>(&mut self, domain: MailboxDomain<'a>);
-    fn scribble_hostname<S: Scribe>(&self, scribe: &mut S);
+
+    fn hostname(&self) -> &[u8];
+    fn systemname(&self) -> &[u8] { b"Cloudship" }
     fn message_size_limit(&self) -> u64;
+    fn auth_mechanisms(&self) -> Option<Self::MechanismIter>;
 
     fn starttls(&mut self, peer_cert: X509) -> bool;
   
@@ -55,6 +58,4 @@ pub trait MailData: Write + Sized {
     fn done(self, reply: ProtoReply);
 }
 
-// XXX Placeholder for now
-trait SaslTransaction { }
 

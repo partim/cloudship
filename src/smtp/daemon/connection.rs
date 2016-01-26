@@ -6,7 +6,7 @@ use mio::{TryRead, TryWrite};
 use tick::{self, Interest, Transport};
 use super::handler::SessionHandler;
 use super::session::Session;
-use ::util::scribe::{Scribe, Scribble};
+use ::util::scribe::Scribe;
 
 
 /// A connection to an SMTP daemon
@@ -20,17 +20,17 @@ pub struct Connection<H: SessionHandler> {
 
 impl<H: SessionHandler> Connection<H> {
     fn new(handler: H) -> Self {
-        let send = build_greeting(&handler);
         Connection {
             session: Session::new(handler),
             direction: Direction::Reply,
             recv: RecvBuf::new(),
-            send: send,
+            send: SendBuf::new(),
         }
     }
 
     pub fn create(handler: H) -> (Connection<H>, Interest) {
-        let conn = Connection::new(handler);
+        let mut conn = Connection::new(handler);
+        conn.direction = conn.session.start(&mut conn.send);
         let interest = conn.interest();
         (conn, interest)
     }
@@ -41,6 +41,7 @@ impl<H: SessionHandler> Connection<H> {
             Direction::Reply => Interest::Write,
             Direction::Closing => Interest::Write,
             Direction::Closed => Interest::Remove,
+            Direction::StartTls => unreachable!(),
         }
     }
 
@@ -61,6 +62,10 @@ impl<H: SessionHandler, T: Transport> tick::Protocol<T> for Connection<H> {
                 debug!("SMTP connection read error: {:?}", e);
                 self.direction = Direction::Closed
             }
+        }
+
+        if self.direction == Direction::StartTls {
+
         }
 
         self.interest()
@@ -89,9 +94,10 @@ impl<H: SessionHandler, T: Transport> tick::Protocol<T> for Connection<H> {
     }
 }
 
+
 //------------ Direction ----------------------------------------------------
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Direction {
     /// Receive and process data.
     Receive,
@@ -101,6 +107,9 @@ pub enum Direction {
 
     /// Write all data, then move to `Direction::Closed`.
     Closing,
+
+    /// Start TLS handshake.
+    StartTls,
 
     /// Close the connection.
     Closed,
@@ -235,18 +244,6 @@ impl Scribe for SendBuf {
     fn scribble_octet(&mut self, v: u8) {
         self.inner.get_mut().push(v);
     }
-}
-
-
-//------------ Helpers ------------------------------------------------------
-
-// TODO: Move this into Session.
-pub fn build_greeting<H: SessionHandler>(handler: &H) -> SendBuf {
-    let mut res = SendBuf::new();
-    scribble!(&mut res, b"220 ");
-    handler.scribble_hostname(&mut res);
-    scribble!(&mut res, b" ESMTP Cloudship\r\n");
-    res
 }
 
 
