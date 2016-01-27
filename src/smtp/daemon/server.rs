@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use mio::tcp::TcpListener;
-use openssl::ssl::{self, SslContext};
+use openssl::ssl::{SslContext};
 use tick::{self, Tick};
 use super::connection::Connection;
 use super::handler::ServerHandler;

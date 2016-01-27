@@ -5,7 +5,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use mio;
 use mio::tcp::{TcpListener, TcpStream};
-use openssl::ssl::{IntoSsl, MaybeSslStream, Ssl, SslContext, SslStream};
+use openssl::ssl::{MaybeSslStream, SslContext, SslStream};
 use openssl::ssl::error::SslError;
 
 

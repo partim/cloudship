@@ -3,7 +3,7 @@ use std::io::{self, Cursor};
 use std::ptr;
 use bytes::{Buf};
 use mio::{TryRead, TryWrite};
-use tick::{self, Interest, Transport};
+use tick::{self, Interest};
 use super::handler::SessionHandler;
 use super::session::Session;
 use ::util::scribe::Scribe;
@@ -55,9 +55,7 @@ impl<H: SessionHandler> Connection<H> {
 
 impl<H: SessionHandler> tick::Protocol<StartTlsStream> for Connection<H> {
     fn on_readable(&mut self, transport: &mut StartTlsStream) -> Interest {
-        let res = self.recv.try_read(transport);
-        debug!("on_readable: try_read() = {:?}", res);
-        match res {
+        match self.recv.try_read(transport) {
             Ok(Some(0)) => self.direction = Direction::Closed,
             Ok(Some(_)) => self.process_read(),
             Ok(None) => { },
@@ -78,9 +76,14 @@ impl<H: SessionHandler> tick::Protocol<StartTlsStream> for Connection<H> {
                     Direction::Closing => Direction::Closed,
                     Direction::Reply => Direction::Receive,
                     Direction::StartTls => {
-                        let res = transport.wrap_server().unwrap();
-                        debug!("TLS accept: {:?}", res);
-                        Direction::Receive
+                        let res = transport.wrap_server();
+                        if res.is_err() {
+                            debug!("TLS handshake failed: {:?}", res);
+                            Direction::Closed
+                        }
+                        else {
+                            Direction::Receive
+                        }
                     }
                     _ => unreachable!()
                 };

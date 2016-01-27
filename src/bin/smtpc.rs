@@ -41,8 +41,8 @@ fn run() -> io::Result<()> {
     let mut context = ssl::SslContext::new(ssl::SslMethod::Tlsv1).unwrap();
     context.set_cipher_list("DEFAULT").unwrap();
     let addr_str = "127.0.0.1:8025";
-    let mut stream = ssl::MaybeSslStream::Normal(
-                                    try!(TcpStream::connect(addr_str)));
+    let stream = try!(TcpStream::connect(addr_str));
+    let mut stream = ssl::MaybeSslStream::Normal(stream);
     let mut starttls = false;
     loop {
         if !try!(read(&mut stream)) { return Ok(()) };
