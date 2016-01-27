@@ -16,3 +16,10 @@ tick		= { git = "https://github.com/seanmonstar/tick.git" }
 [[bin]]
 name = "cloudship"
 doc  = false
+
+[[bin]]
+name = "smtpc"
+path = "src/bin/smtpc.rs"
+doc  = false
+test = false
+

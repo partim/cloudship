@@ -7,6 +7,7 @@ use tick::{self, Interest, Transport};
 use super::handler::SessionHandler;
 use super::session::Session;
 use ::util::scribe::Scribe;
+use ::net::tls::StartTlsStream;
 
 
 /// A connection to an SMTP daemon
@@ -41,7 +42,7 @@ impl<H: SessionHandler> Connection<H> {
             Direction::Reply => Interest::Write,
             Direction::Closing => Interest::Write,
             Direction::Closed => Interest::Remove,
-            Direction::StartTls => unreachable!(),
+            Direction::StartTls => Interest::Write,
         }
     }
 
@@ -52,9 +53,11 @@ impl<H: SessionHandler> Connection<H> {
     }
 }
 
-impl<H: SessionHandler, T: Transport> tick::Protocol<T> for Connection<H> {
-    fn on_readable(&mut self, transport: &mut T) -> Interest {
-        match self.recv.try_read(transport) {
+impl<H: SessionHandler> tick::Protocol<StartTlsStream> for Connection<H> {
+    fn on_readable(&mut self, transport: &mut StartTlsStream) -> Interest {
+        let res = self.recv.try_read(transport);
+        debug!("on_readable: try_read() = {:?}", res);
+        match res {
             Ok(Some(0)) => self.direction = Direction::Closed,
             Ok(Some(_)) => self.process_read(),
             Ok(None) => { },
@@ -64,19 +67,21 @@ impl<H: SessionHandler, T: Transport> tick::Protocol<T> for Connection<H> {
             }
         }
 
-        if self.direction == Direction::StartTls {
-
-        }
-
         self.interest()
     }
 
-    fn on_writable(&mut self, transport: &mut T) -> Interest {
+    fn on_writable(&mut self, transport: &mut StartTlsStream) -> Interest {
+        debug!("on_writable()");
         match self.send.try_write(transport) {
             Ok(true) => {
                 self.direction = match self.direction {
                     Direction::Closing => Direction::Closed,
                     Direction::Reply => Direction::Receive,
+                    Direction::StartTls => {
+                        let res = transport.wrap_server().unwrap();
+                        debug!("TLS accept: {:?}", res);
+                        Direction::Receive
+                    }
                     _ => unreachable!()
                 };
             }
