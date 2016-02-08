@@ -17,9 +17,9 @@ macro_rules! empty_command (
     ($i:expr, $verb: expr, $result: expr) => (
         chain!($i,
             call!(text, $verb) ~ 
-            res: alt!(map!(wspcrlf, |_| Ok($result) ) |
+            res: alt!(map!(wspcrlf, |_| $result ) |
                       map!(take_until_and_consume!(b"\r\n"),
-                           |_| Err(CommandError::Parameters))
+                           |_| Command::ParameterError)
                  ),
             || res
         )
@@ -34,9 +34,9 @@ macro_rules! command (
     ($i:expr, $verb: expr, $($rest:tt)*) => (
         alt!($i,
             chain!(call!(text, $verb) ~ wsps ~
-                   res: $($rest)* ~ wspcrlf, || Ok(res)) |
+                   res: $($rest)* ~ wspcrlf, || res) |
             chain!(call!(text, $verb) ~ take_until_and_consume!(b"\r\n"),
-                   || Err(CommandError::Parameters))
+                   || Command::ParameterError)
         )
     );
 );
@@ -45,18 +45,6 @@ macro_rules! method (
     ($i:expr, $s:ident, $fun:ident) => ( $s.$fun( $i ) );
     //($i:expr, $fun:expr, $($args:expr),* ) => ( self.$fun( $i, $($args),* ) );
 );
-
-
-//------------ CommandError -------------------------------------------------
-
-#[derive(Debug)]
-pub enum CommandError {
-    /// "Syntax error, command unrecognized" (500)
-    Unrecognized,
-
-    /// "Syntax error in parameters or arguments" (501)
-    Parameters,
-}
 
 
 //------------ Command ------------------------------------------------------
@@ -83,11 +71,14 @@ pub enum Command<'a> {
 
     // RFC 4954
     Auth { mechanism: &'a[u8], initial: Option<&'a[u8]> },
+
+    // Command errors
+    Unrecognized,
+    ParameterError,
 }
 
 impl<'a> Command<'a> {
-    pub fn parse(input: &'a [u8])
-                 -> IResult<&'a [u8], Result<Command<'a>, CommandError>> {
+    pub fn parse(input: &'a [u8]) -> IResult<&'a [u8], Command<'a>> {
         alt!(input,
              command!(b"EHLO", 
                       map!(call!(MailboxDomain::parse),
@@ -133,7 +124,7 @@ impl<'a> Command<'a> {
                              || Command::Auth { mechanism: mechanism,
                                                 initial: initial })
              ) |
-             map!(wspcrlf, |_| Err(CommandError::Unrecognized))
+             map!(take_until_and_consume!(b"\r\n"), |_| Command::Unrecognized)
         )
     }
 

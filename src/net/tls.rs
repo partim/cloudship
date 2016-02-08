@@ -1,30 +1,30 @@
 
 use std::io::{self, Read, Write};
-use std::mem;
 use std::net::SocketAddr;
-use std::sync::Arc;
 use mio;
 use mio::tcp::{TcpListener, TcpStream};
 use openssl::ssl::{MaybeSslStream, SslContext, SslStream};
 use openssl::ssl::error::SslError;
+use openssl::x509::X509;
 
 
 /// A TcpListener for streams that can start TLS later.
 ///
-pub struct StartTlsListener {
-    ctx: Arc<SslContext>,
-    lsnr: TcpListener,
-}
+pub struct StartTlsListener(TcpListener);
 
 impl StartTlsListener {
-    pub fn new(ctx: Arc<SslContext>, lsnr: TcpListener) -> StartTlsListener {
-        StartTlsListener { ctx: ctx, lsnr: lsnr }
+    pub fn new(lsnr: TcpListener) -> StartTlsListener {
+        StartTlsListener(lsnr)
+    }
+
+    pub fn bind(addr: &SocketAddr) -> io::Result<StartTlsListener> {
+        Ok(StartTlsListener::new(try!(TcpListener::bind(addr))))
     }
 
     pub fn accept(&self) -> io::Result<Option<(StartTlsStream, SocketAddr)>> {
-        self.lsnr.accept().map(
+        self.0.accept().map(
             |res| res.map(|(stream, addr)|
-                (StartTlsStream::new(self.ctx.clone(), stream), addr)))
+                (StartTlsStream::new(stream), addr)))
     }
 }
 
@@ -40,88 +40,84 @@ impl mio::Evented for StartTlsListener {
     fn register(&self, selector: &mut mio::Selector, token: mio::Token,
                 interest: mio::EventSet, opts: mio::PollOpt)
                 -> io::Result<()> {
-        self.lsnr.register(selector, token, interest, opts)
+        self.0.register(selector, token, interest, opts)
     }
 
     fn reregister(&self, selector: &mut mio::Selector, token: mio::Token,
                   interest: mio::EventSet, opts: mio::PollOpt)
                   -> io::Result<()> {
-        self.lsnr.reregister(selector, token, interest, opts)
+        self.0.reregister(selector, token, interest, opts)
     }
 
     fn deregister(&self, selector: &mut mio::Selector) -> io::Result<()> {
-        self.lsnr.deregister(selector)
+        self.0.deregister(selector)
     }
 }
 
 
 /// A TcpStream for stream that can start TLS later.
 ///
-pub struct StartTlsStream {
-    ctx: Arc<SslContext>,
-    stream: MaybeSslStream<TcpStream>,
-}
+pub struct StartTlsStream(MaybeSslStream<TcpStream>);
 
 impl StartTlsStream {
-    fn new(ctx: Arc<SslContext>, stream: TcpStream) -> StartTlsStream {
-        StartTlsStream { ctx: ctx,
-                         stream: MaybeSslStream::Normal(stream) }
+    fn new(stream: TcpStream) -> StartTlsStream {
+        StartTlsStream(MaybeSslStream::Normal(stream))
     }
 
-    pub fn wrap_client(&mut self) -> Result<(), SslError> {
-        self.wrap(SslStream::<TcpStream>::connect::<&SslContext>)
+    pub fn wrap_client(self, ctx: &SslContext) -> Result<Self, SslError> {
+        self.wrap(|s| { SslStream::connect(ctx, s) })
     }
 
-    pub fn wrap_server(&mut self) -> Result<(), SslError> {
-        self.wrap(SslStream::<TcpStream>::accept::<&SslContext>)
+    pub fn wrap_server(self, ctx: &SslContext) -> Result<Self, SslError> {
+        self.wrap(|s| { SslStream::accept(ctx, s) })
     }
 
-    fn wrap<'a, F>(&'a mut self, f: F) -> Result<(), SslError>
-            where F: Fn(&'a SslContext, TcpStream)
+    fn wrap<F>(self, f: F) -> Result<Self, SslError>
+            where F: Fn(TcpStream)
                               -> Result<SslStream<TcpStream>, SslError> {
-        
-        let stream = match self.stream {
-            MaybeSslStream::Ssl(_) => { return Ok(()) }
-            MaybeSslStream::Normal(ref s) => {
-                match s.try_clone() {
-                    Ok(s) => s,
-                    Err(e) => { return Err(SslError::StreamError(e)) }
-                }
-            }
+        let stream = match self.0 {
+            MaybeSslStream::Ssl(_) => { return Ok(self) }
+            MaybeSslStream::Normal(s) => s
         };
-        let stream = mem::replace(&mut self.stream,
-                                  MaybeSslStream::Normal(stream));
-        let stream = match stream {
-            MaybeSslStream::Normal(s) => s,
-            _ => unreachable!()
-        };
-        let ctx: &'a SslContext = &self.ctx;
-        let stream = try!(f(ctx, stream));
-        self.stream = MaybeSslStream::Ssl(stream);
-        Ok(())
+        let ssl_stream = try!(f(stream));
+        Ok(StartTlsStream(MaybeSslStream::Ssl(ssl_stream)))
     }
 
     fn tcp_stream<'a>(&'a self) -> &'a TcpStream {
-        match self.stream {
+        match self.0 {
             MaybeSslStream::Normal(ref s) => s,
             MaybeSslStream::Ssl(ref s) => s.get_ref(),
+        }
+    }
+
+    pub fn peer_certificate(&self) -> Option<X509> {
+        match self.0 {
+            MaybeSslStream::Normal(_) => None,
+            MaybeSslStream::Ssl(ref s) => s.ssl().peer_certificate()
+        }
+    }
+
+    pub fn is_wrapped(&self) -> bool {
+        match self.0 {
+            MaybeSslStream::Normal(..) => false,
+            MaybeSslStream::Ssl(..) => true,
         }
     }
 }
 
 impl Read for StartTlsStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.stream.read(buf)
+        self.0.read(buf)
     }
 }
 
 impl Write for StartTlsStream {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.stream.write(buf)
+        self.0.write(buf)
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        self.stream.flush()
+        self.0.flush()
     }
 }
 

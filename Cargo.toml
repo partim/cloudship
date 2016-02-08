@@ -9,9 +9,10 @@ docopt  	= "0.6"
 env_logger	= "0.3"
 log		= "0.3"
 mio		= "0.5"
+netbuf		= "0.3"
 nom		= "1.0"
 openssl		= "0.7"
-tick		= { git = "https://github.com/seanmonstar/tick.git" }
+rotor		= { git = "https://github.com/tailhook/rotor.git" }
 
 [[bin]]
 name = "cloudship"
