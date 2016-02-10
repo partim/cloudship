@@ -38,12 +38,20 @@ impl Context {
     }
 
     fn create_ssl_context() -> ssl::SslContext {
+        use openssl::crypto::hash::Type;
+
         let mut ctx = ssl::SslContext::new(ssl::SslMethod::Tlsv1).unwrap();
         ctx.set_cipher_list("DEFAULT").unwrap();
-        ctx.set_certificate_file("certs/dummy.crt",
-                                 x509::X509FileType::PEM).unwrap();
-        ctx.set_private_key_file("certs/dummy.key",
-                                 x509::X509FileType::PEM).unwrap();
+
+        let gen = x509::X509Generator::new()
+                  .set_bitlength(2048)
+                  .set_valid_period(5)
+                  .add_name("CN".to_string(), "localhost.local".to_string())
+                  .set_sign_hash(Type::SHA256);
+        let (cert, pkey) = gen.generate().unwrap();
+
+        ctx.set_certificate(&cert).unwrap();
+        ctx.set_private_key(&pkey).unwrap();
         ctx
     }
 
