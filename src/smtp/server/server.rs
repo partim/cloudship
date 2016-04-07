@@ -1,9 +1,9 @@
 
-use std::error::Error;
 use std::io;
 use std::net::SocketAddr;
 use mio::{EventSet, PollOpt};
 use rotor::{GenericScope, Machine, Response, Scope};
+use rotor::void::Void;
 use ::net::tls::{StartTlsListener, StartTlsStream};
 use super::protocol::Protocol;
 use super::connection::Connection;
@@ -48,8 +48,11 @@ impl<P: Protocol> Machine for Server<P> {
     type Seed = StartTlsStream;
 
     fn create(sock: StartTlsStream, scope: &mut Scope<Self::Context>)
-              -> Result<Self, Box<Error>> {
-        Ok(Server::Connection(try!(Connection::new(sock, scope))))
+              -> Response<Self, Void> {
+        match Connection::new(sock, scope) {
+            Ok(conn) => Response::ok(Server::Connection(conn)),
+            Err(err) => Response::error(Box::new(err))
+        }
     }
 
     fn ready(self, events: EventSet, scope: &mut Scope<Self::Context>)

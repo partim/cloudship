@@ -4,6 +4,7 @@ extern crate openssl;
 extern crate rotor;
 
 use openssl::{ssl, x509};
+use rotor::Response;
 use cloudship::smtp;
 
 //------------ main ---------------------------------------------------------
@@ -13,8 +14,9 @@ fn main() {
     let event_loop = rotor::Loop::new(&rotor::Config::new()).unwrap();
     let mut loop_inst = event_loop.instantiate(Context::new());
     loop_inst.add_machine_with(|scope|
-        Ok(SmtpServer::bind(&"127.0.0.1:8025".parse().unwrap(), scope)
-                       .unwrap())
+        Response::ok(SmtpServer::bind(&"127.0.0.1:8025".parse().unwrap(),
+                                      scope)
+                                .unwrap())
     ).unwrap();
     loop_inst.run().unwrap();
 }

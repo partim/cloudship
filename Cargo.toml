@@ -12,7 +12,7 @@ mio		= "0.5"
 netbuf		= "0.3"
 nom		= "1.0"
 openssl		= "0.7"
-rotor		= { git = "https://github.com/tailhook/rotor.git" }
+rotor		= "0.6"
 
 [[bin]]
 name = "cloudship"
