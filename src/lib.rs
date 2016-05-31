@@ -1,4 +1,5 @@
 extern crate bytes;
+extern crate chrono;
 extern crate mio;
 extern crate netbuf;
 #[macro_use] extern crate nom;

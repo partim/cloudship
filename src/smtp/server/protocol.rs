@@ -11,7 +11,7 @@
 //! processing. By returning `Some(Self)`, they indicate continued processing
 //! using the returned state machine.
 //!
-//! Most method additionally allow to delay their decision whether to
+//! Most methods additionally allow to delay their decision whether to
 //! continue or not. The return type of these methods is
 //! `Hesitant<Self>` with the three options `Hesitant::Continue(Self)`,
 //! `Hesitant::Wait(Self)` and `Hesitant::Stop`. For defering, you will

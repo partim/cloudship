@@ -1,6 +1,7 @@
 //! Parsing and scribbling of data defined through ABNF
 
 pub mod core;
+pub mod imap4;
 pub mod ipaddr;
 
 use nom;
