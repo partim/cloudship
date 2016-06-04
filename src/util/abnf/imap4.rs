@@ -19,6 +19,9 @@ pub fn test_atom_char(chr: u8) -> Result<u8> {
     else { Err(ErrorKind::Char) }
 }
 
+//**** Maybe create is_... functions, and possibly ditch the test_... functions.
+//**** Maybe build the cat_chr on top of is_... instead.
+
 /// Test for and translate atom-specials.
 ///
 /// > atom-specials   =   "(" / ")" / "{" / SP / CTL / list-wildcards /

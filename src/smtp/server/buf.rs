@@ -141,4 +141,3 @@ impl Scribe for SendBuf {
         self.inner.get_mut().push(v);
     }
 }
-

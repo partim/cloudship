@@ -2,7 +2,7 @@ use std::fmt;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use nom::{IResult, ErrorKind, is_alphanumeric};
 use nom::IResult::{Done, Error, Incomplete};
-use ::util::abnf::core::{alpha_digit, cat_chr, cat_chrs, chr, digit, 
+use ::util::abnf::core::{alpha_digit, cat_chr, cat_chrs, chr, digit,
                          opt_cat_chrs, opt_wsps, text, three_digits,
                          u64_digits, wspcrlf, wsp, wsps};
 
@@ -16,7 +16,7 @@ use ::util::abnf::core::{alpha_digit, cat_chr, cat_chrs, chr, digit,
 macro_rules! empty_command (
     ($i:expr, $verb: expr, $result: expr) => (
         chain!($i,
-            call!(text, $verb) ~ 
+            call!(text, $verb) ~
             res: alt!(map!(wspcrlf, |_| $result ) |
                       map!(take_until_and_consume!(b"\r\n"),
                            |_| Command::ParameterError)
@@ -27,7 +27,7 @@ macro_rules! empty_command (
 );
 
 /// `command!(&[T]: nom::AsBytes) => &[T] -> IResult<&[T], ::CommandResult>
-/// 
+///
 /// The command $verb with parameters and result defined through a parser.
 ///
 macro_rules! command (
@@ -54,7 +54,7 @@ macro_rules! method (
 #[derive(Debug)]
 pub enum Command<'a> {
     // RFC 5321
-    Ehlo(MailboxDomain<'a>), 
+    Ehlo(MailboxDomain<'a>),
     Helo(Domain<'a>),
     Mail(ReversePath<'a>, MailParameters<'a>),
     Rcpt(RcptPath<'a>, RcptParameters<'a>),
@@ -80,7 +80,7 @@ pub enum Command<'a> {
 impl<'a> Command<'a> {
     pub fn parse(input: &'a [u8]) -> IResult<&'a [u8], Command<'a>> {
         alt!(input,
-             command!(b"EHLO", 
+             command!(b"EHLO",
                       map!(call!(MailboxDomain::parse),
                            |res| Command::Ehlo(res))
              ) |
@@ -633,7 +633,7 @@ fn at_domain(input: &[u8]) -> IResult<&[u8], ()> {
 
 //------------ Domain -------------------------------------------------------
 
-#[derive(Debug)]
+#[derive(Debug, Eq, Hash, PartialEq)]
 pub struct Domain<'a>(&'a[u8]);
 
 impl<'a> Domain<'a> {
@@ -688,7 +688,7 @@ fn sub_domain(input: &[u8]) -> IResult<&[u8], &[u8]> {
 
 //------------ MailboxDomain ------------------------------------------------
 
-#[derive(Debug)]
+#[derive(Debug, Eq, Hash, PartialEq)]
 pub enum MailboxDomain<'a> {
     Domain(Domain<'a>),
     Address(AddressLiteral<'a>),
@@ -717,7 +717,7 @@ impl<'a> fmt::Display for MailboxDomain<'a> {
 
 //------------ Mailbox ------------------------------------------------------
 
-#[derive(Debug)]
+#[derive(Debug, Eq, Hash, PartialEq)]
 pub struct Mailbox<'a> {
     local: LocalPart<'a>,
     domain: MailboxDomain<'a>,
@@ -736,7 +736,7 @@ impl<'a> Mailbox<'a> {
 
 //------------ LocalPart ----------------------------------------------------
 
-#[derive(Debug)]
+#[derive(Debug, Eq, Hash, PartialEq)]
 pub enum LocalPart<'a> {
     Dotted(&'a [u8]),
     Quoted(QuotedString<'a>),
@@ -787,12 +787,12 @@ pub fn atom(input: &[u8]) -> IResult<&[u8], &[u8]> {
 
 //------------ QuotedString -------------------------------------------------
 
-#[derive(Debug)]
+#[derive(Debug, Eq, Hash, PartialEq)]
 pub struct QuotedString<'a> (&'a [u8]);
 
 impl<'a> QuotedString<'a> {
     pub fn parse(input: &'a [u8]) -> IResult<&[u8], QuotedString<'a>> {
-        let (output, res) = try_parse!(input, 
+        let (output, res) = try_parse!(input,
             delimited!(call!(chr, b'"'),
                        escaped!(call!(cat_chr, qtext), b'\\',
                                 call!(cat_chr, quoted_char)),
@@ -840,7 +840,7 @@ impl<'a> Word<'a> {
 
 //------------ AdressLiteral ------------------------------------------------
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Eq, Hash, PartialEq)]
 pub enum AddressLiteral<'a> {
     Ipv4(Ipv4Addr),
     Ipv6(Ipv6Addr),
@@ -929,7 +929,7 @@ pub fn ldh_str(input: &[u8]) -> IResult<&[u8], &[u8]> {
 /// textstring     = 1*(%d09 / %d32-126) ; HT, SP, Printable US-ASCII
 /// Reply-code     = %x32-35 %x30-35 %x30-39
 /// ```
-/// 
+///
 /// This also processes enhanced status codes.
 ///
 #[derive(Debug, PartialEq)]
@@ -940,7 +940,7 @@ pub struct Reply {
 }
 
 impl Reply {
-    pub fn new(code: u16, status: Option<(u16, u16, u16)>, text: Vec<u8>) 
+    pub fn new(code: u16, status: Option<(u16, u16, u16)>, text: Vec<u8>)
                -> Self {
         Reply { code: code, status: status, text: text }
     }

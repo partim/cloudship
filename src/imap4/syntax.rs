@@ -1,9 +1,9 @@
-use nom::{IResult, ErrorKind};
+use nom;
 use std::collections::HashSet;
 use std::fmt;
 use ::util::abnf::core::{cat_chrs, chr};
 use ::util::abnf::imap4::{test_atom_char};
-
+use ::util::abnf::{IResult, Result};
 
 // settings, kind of
 
@@ -50,43 +50,28 @@ pub enum Tag<'a> {
 // list-wildcards  = "%" / "*"
 
 impl<'a> Tag<'a> {
-    pub fn parse(input: &'a [u8]) -> IResult<&[u8], Tag<'a>> {
+    pub fn parse(input: &'a [u8]) -> IResult<Tag<'a>> {
         alt!(input,
              map!(call!(chr, b'*'), |_| Tag::Untagged) |
              map!(call!(cat_chrs, Tag::test_tag), |a| Tag::Tagged(a)))
     }
 
-    fn test_tag(chr: u8) -> Result<u8, ErrorKind> {
+    fn test_tag(chr: u8) -> Result<u8> {
         if chr != b'+' && test_atom_char(chr).is_ok() { Ok(chr ) }
-        else { Err(ErrorKind::Char) }
-    }
-}
-
-impl<'a> fmt::Display for Tag<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            Tag::Tagged(tag) => {
-                use std::str::from_utf8_unchecked;
-                try!(write!(f, "{}", unsafe { from_utf8_unchecked(tag) }));
-            },
-            Tag::Untagged => {
-                try!(write!(f, "*"));
-            }
-        }
-        Ok(())
+        else { Err(nom::ErrorKind::Char) }
     }
 }
 
 #[derive(Debug)]
 pub struct Notice<'a>(&'a[u8]);
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct UidValue(u32);
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct UidValidity(u32);
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct Uid {
     value: UidValue,
     validity: UidValidity
@@ -133,7 +118,7 @@ pub enum Command {
 }
 
 impl Command {
-    pub fn parse<'a>(input: &'a [u8]) -> IResult<&'a [u8], Command> {
+    pub fn parse<'a>(input: &'a [u8]) -> IResult<Command> {
         unimplemented!()
     }
 }
