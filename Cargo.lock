@@ -144,7 +144,7 @@ dependencies = [
 [[package]]
 name = "netmachines"
 version = "0.1.0"
-source = "git+https://github.com/cloudshipping/netmachines.git#133c48309b7d88b4bad47f0d78bbe7cddf8325f0"
+source = "git+https://github.com/cloudshipping/netmachines.git#cd7788aac6669dd085f07cc5822292d6dbb31112"
 dependencies = [
  "log 0.3.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "openssl 0.7.14 (registry+https://github.com/rust-lang/crates.io-index)",
