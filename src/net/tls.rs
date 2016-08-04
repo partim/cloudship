@@ -1,8 +1,8 @@
 
 use std::io::{self, Read, Write};
 use std::net::SocketAddr;
-use mio;
-use mio::tcp::{TcpListener, TcpStream};
+use rotor::mio;
+use rotor::mio::tcp::{TcpListener, TcpStream};
 use openssl::ssl::{MaybeSslStream, SslContext, SslStream};
 use openssl::ssl::error::SslError;
 use openssl::x509::X509;

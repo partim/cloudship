@@ -23,8 +23,6 @@
 //! * BURL (see RFC 4468)
 //! * FUTURERELEASE (see RFC 4865)
 //!
-pub use self::server::Server;
-pub use self::server::null::NullProtocol;
 
 pub mod server;
 pub mod syntax;

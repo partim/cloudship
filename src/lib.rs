@@ -1,6 +1,5 @@
 extern crate bytes;
-extern crate mio;
-extern crate netbuf;
+extern crate netmachines;
 #[macro_use] extern crate nom;
 extern crate openssl;
 extern crate rotor;

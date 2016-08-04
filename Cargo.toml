@@ -4,15 +4,13 @@ version = "0.0.1"
 authors = ["Bjørn Nordbø <bn@strangedays.no>", "Martin Hoffmann <hn@nvnc.de>"]
 
 [dependencies]
-bytes		= "0.3"
-docopt  	= "0.6"
-env_logger	= "0.3"
-log		= "0.3"
-mio		= "0.5"
-netbuf		= "0.3"
-nom		= "1.0"
-openssl		= "0.7"
-rotor		= "0.6"
+bytes       = "0.3"
+env_logger  = "0.3"
+log         = "0.3"
+netmachines = { git = "https://github.com/cloudshipping/netmachines.git" }
+nom         = "1.0"
+openssl     = "0.7"
+rotor       = "0.6"
 
 [[bin]]
 name = "cloudship"

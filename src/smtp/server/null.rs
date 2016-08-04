@@ -1,123 +1,112 @@
-//! Trait implementations that just throw away data.
 
-use std::marker::PhantomData;
-use openssl::ssl::SslContext;
-use openssl::x509::X509;
-use rotor::Notifier;
-use super::super::syntax;
-use super::protocol::{Context, Hesitant, Protocol, MailTransaction};
-use super::protocol::Hesitant::Continue;
+use std::net::SocketAddr;
+use netmachines::sockets::Certificate;
+use rotor::{Notifier, Void};
+use ::smtp::syntax;
+use super::protocol::{AncillaryHandler, DataHandler, Hesitant, MailHandler,
+                      Protocol, SessionHandler};
 use super::reply::ReplyBuf;
 
 
-pub struct NullContext {
-    ssl_context: SslContext,
-}
+//------------ NullProtocol --------------------------------------------------
 
-impl NullContext {
-    pub fn new(ssl_context: SslContext) -> Self {
-        NullContext { ssl_context: ssl_context }
-    }
-}
+pub struct NullProtocol;
 
-impl Context for NullContext {
-    fn ssl_context(&self) -> SslContext { self.ssl_context.clone() }
-    fn hostname(&self) -> &[u8] { b"localhost.local" }
-    fn systemname(&self) -> &[u8] { b"Cloudship" }
-    fn message_size_limit(&self) -> u64 { 10485760u64 }
-}
+impl Protocol for NullProtocol {
+    type Session = Self;
+    type Mail = Self;
+    type Data = Self;
 
-
-pub struct NullProtocol<Ctx: Context> {
-    phantom: PhantomData<Ctx>,
-}
-
-impl<Ctx: Context> NullProtocol<Ctx> {
-    pub fn new() -> Self {
-        NullProtocol { phantom: PhantomData }
+    fn accept(&mut self, _addr: &SocketAddr) -> Option<()> {
+        Some(())
     }
 }
 
 
-impl<Ctx: Context> Protocol for NullProtocol<Ctx> {
-    type Context = Ctx;
-    type Mail = NullMail;
+impl AncillaryHandler for NullProtocol {
+    type Verify = Void;
+    type Expand = Void;
+    type Help = Void;
 
-    fn create(context: &Self::Context, notifier: Notifier) -> Option<Self> {
-        let _ = (context, notifier);
-        Some(NullProtocol::new())
+    fn verify(self, _what: syntax::Word, _params: syntax::VrfyParameters,
+              reply: ReplyBuf) -> Hesitant<Self, Void> {
+        reply.reply(252, (2, 7, 0), b"VRFY administratively disabled\r\n");
+        Hesitant::Final(self)
     }
 
-    fn hello(self, domain: syntax::MailboxDomain) -> Hesitant<Self> {
-        let _ = domain;
-        Continue(self)
+    fn expand(self, _what: syntax::Word, _params: syntax::ExpnParameters,
+              reply: ReplyBuf) -> Hesitant<Self, Void> {
+        reply.reply(252, (2, 7, 0), b"EXPN administratively disabled\r\n");
+        Hesitant::Final(self)
     }
 
-    fn starttls(self, peer_cert: Option<X509>) -> Hesitant<Self> {
-        let _ = peer_cert;
-        Continue(self)
-    }
-
-    fn mail(&self) -> Self::Mail {
-        NullMail
-    }
-
-    fn verify(self, what: syntax::Word, params: syntax::VrfyParameters,
-              send: ReplyBuf) -> Hesitant<Self> {
-        let _ = (what, params);
-        send.reply(252, (2, 7, 0), b"VRFY administratively disabled\r\n");
-        Continue(self)
-    }
-
-    fn expand(self, what: syntax::Word, params: syntax::ExpnParameters,
-              send: ReplyBuf) -> Hesitant<Self> {
-        let _ = (what, params);
-        send.reply(252, (2, 7, 0), b"EXPN administratively disabled\r\n");
-        Continue(self)
-    }
-
-    fn help(self, what: Option<syntax::Word>, send: ReplyBuf)
-            -> Hesitant<Self> {
-        let _ = what;
-        send.reply(214, (2, 0, 0),
+    fn help(self, _what: Option<syntax::Word>, reply: ReplyBuf)
+            -> Hesitant<Self, Void> {
+        reply.reply(214, (2, 0, 0),
                    b"This SMTP server eats your mail.\r\n");
-        Continue(self)
+        Hesitant::Final(self)
     }
 }
 
 
-pub struct NullMail;
+impl SessionHandler<NullProtocol> for NullProtocol {
+    type Seed = ();
+    type Start = Void;
+    type Hello = Void;
+    type CheckTls = Void;
+    type Mail = Void;
 
-impl MailTransaction for NullMail {
-    fn mail(self, path: syntax::ReversePath, params: syntax::MailParameters,
-            send: ReplyBuf) -> Hesitant<Self> {
-        let _ = (path, params);
-        send.reply(250, (2, 1, 0), b"Ok\r\n");
-        Continue(self)
+    fn start(_seed: (), _notifier: Notifier) -> Hesitant<Option<Self>, Void> {
+        Hesitant::Final(Some(NullProtocol))
     }
 
-    fn recipient(self, path: syntax::RcptPath,
-                 params: syntax::RcptParameters, send: ReplyBuf)
-                 -> Hesitant<Self> {
-        let _ = (path, params);
-        send.reply(250, (2, 1, 0), b"Ok\r\n");
-        Continue(self)
+    fn hello(self, _domain: syntax::MailboxDomain)
+             -> Hesitant<Option<Self>, Void> {
+        Hesitant::Final(Some(self))
     }
 
-    fn data(self) -> Hesitant<Self> {
-        Continue(self)
+    fn check_tls<C: Certificate>(self, _peer_cert: Option<C>)
+                                 -> Hesitant<Option<Self>, Void> {
+        Hesitant::Final(Some(self))
     }
 
-    fn chunk(&mut self, data: &[u8]) {
-        let _ = data;
+    fn mail(self, _path: syntax::ReversePath, _params: syntax::MailParameters,
+            reply: ReplyBuf) -> Hesitant<Result<Self, Self>, Void> {
+        reply.reply(250, (2, 1, 0), b"Ok\r\n");
+        Hesitant::Final(Ok(self))
     }
-    
-    fn complete(self, send: ReplyBuf) -> Hesitant<Self> {
-        send.reply(250, (2, 1, 0), b"Ok\r\n");
-        Continue(self)
+}
+
+
+impl MailHandler<NullProtocol> for NullProtocol {
+    type Recipient = Void;
+    type Data = Void;
+
+    fn recipient(self, _path: syntax::RcptPath,
+                 _params: syntax::RcptParameters, reply: ReplyBuf)
+                 -> Hesitant<Result<Self, NullProtocol>, Void> {
+        reply.reply(250, (2, 1, 0), b"Ok\r\n");
+        Hesitant::Final(Ok(self))
     }
 
-    fn reset(self) -> Hesitant<Self> {
-        Continue(self)
+    fn data(self) -> Hesitant<Result<Self, Self>, Void> {
+        Hesitant::Final(Ok(self))
+    }
+
+    fn reset(self) -> Self {
+        self
+    }
+}
+
+
+impl DataHandler<NullProtocol> for NullProtocol {
+    type Complete = Void;
+
+    fn chunk(&mut self, _data: &[u8]) {
+    }
+
+    fn complete(self, reply: ReplyBuf) -> Hesitant<Self, Void> {
+        reply.reply(250, (2, 1, 0), b"Ok\r\n");
+        Hesitant::Final(self)
     }
 }

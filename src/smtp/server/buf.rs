@@ -2,7 +2,9 @@ use std::cmp::min;
 use std::io;
 use std::ptr;
 use bytes::buf::Buf;
-use mio::{TryRead, TryWrite};
+use nom::IResult;
+use rotor::mio::{TryRead, TryWrite};
+use ::smtp::syntax::Command;
 use ::util::scribe::Scribe;
 use super::reply::Reply;
 
@@ -65,6 +67,25 @@ impl RecvBuf {
             }
         }
         None
+    }
+
+    pub fn parse_command<F, T>(&mut self, f: F) -> Result<T, ()>
+                         where F: FnOnce(Option<Command>) -> T {
+        let len = self.len();
+        let (advance, res) = match Command::parse(self.as_slice()) {
+            IResult::Done(rest, cmd) => {
+                (len - rest.len(), Ok(f(Some(cmd))))
+            }
+            IResult::Error(err) => {
+                error!("SMTP server: parse error: {:?}", err);
+                (0, Err(()))
+            }
+            IResult::Incomplete(..) => {
+                (0, Ok(f(None)))
+            }
+        };
+        self.advance(advance);
+        res
     }
 }
 

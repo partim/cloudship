@@ -1,197 +1,214 @@
 //! Traits for implementing the SMTP server logic.
 //!
-//! There is two traits here plus the SASL traits for authentication. The
-//! `Protocol` trait is used to perform general processing for a client
-//! connection. The `MailTransaction` trait is used for processing a single
-//! mail transaction.
-//!
-//! All the methods in these traits work the same: They take an owned `self`
-//! plus perhaps a bunch of additional arguments and return an optional new
-//! owned `Self`. By returning `None` they indicate failure and the end of
-//! processing. By returning `Some(Self)`, they indicate continued processing
-//! using the returned state machine.
-//!
-//! Most method additionally allow to delay their decision whether to
-//! continue or not. The return type of these methods is
-//! `Hesitant<Self>` with the three options `Hesitant::Continue(Self)`,
-//! `Hesitant::Wait(Self)` and `Hesitant::Stop`. For defering, you will
-//! receive a `Notifier` in `Protocol::create()` that you can use to wake
-//! up the underlying state machine later.
-//!
-//! Each such method has a companion method prefixed with `continue_` which
-//! is called if the underlying state machine has been woken up. Note that
-//! such a wake-up may be spurious and doesn't necessarily mean that the
-//! notifer was actually called by your code. All continuation methods have
-//! default implementations that panic to safe you some work if you don't
-//! actually defer certain methods.
-//!
-//! You can be sure that after a deferring response the continuation method
-//! is the next method called.
-//!
-use openssl::ssl::SslContext;
-use openssl::x509::X509;
-use rotor::Notifier;
-use super::super::syntax;
-use super::ReplyBuf;
-
-/// A trait for context types supporting the SMTP server.
-///
-pub trait Context: Sized {
-    fn ssl_context(&self) -> SslContext;
-    fn hostname(&self) -> &[u8];
-    fn systemname(&self) -> &[u8];
-    fn message_size_limit(&self) -> u64;
-}
+use std::net::SocketAddr;
+use netmachines::sockets::Certificate;
+use rotor::{Notifier, Void};
+use ::smtp::syntax;
+use super::reply::ReplyBuf;
 
 
-/// The return type for deferable methods.
-///
+//============ Handling of Deferred Decisions ================================
+//
+// This should probably go into its own module. Or perhaps even be made part
+// of netmachines?
+
+/// The return type for methods allowing undecided implementors.
 #[derive(Debug)]
-pub enum Hesitant<M> {
-    Continue(M),
-    Defer(M),
-    Stop
+pub enum Hesitant<T, D> {
+    /// We have made a decision.
+    Final(T),
+
+    /// Ask again later.
+    Defer(D)
 }
+
+impl<T, D> Hesitant<T, D> {
+    pub fn map<U, E, F, G>(self, f: F, g: G) -> Hesitant<U, E>
+           where F: FnOnce(T) -> U,
+                 G: FnOnce(D) -> E {
+        match self {
+            Hesitant::Final(t) => Hesitant::Final(f(t)),
+            Hesitant::Defer(d) => Hesitant::Defer(g(d))
+        }
+    }
+
+    pub fn map_final<U, F>(self, f: F) -> Hesitant<U, D>
+                     where F: FnOnce(T) -> U {
+        match self {
+            Hesitant::Final(t) => Hesitant::Final(f(t)),
+            Hesitant::Defer(d) => Hesitant::Defer(d)
+        }
+    }
+}
+
+/// A trait for types used for deferred processing.
+///
+/// This trais is generic over the type of the final decision `F`. Normally,
+/// this would by an associated type, but we are using `Void` as a placeholder
+/// if a protocol doesn’t want to ever defer a method, so `Void` needs to
+/// implement `Undecided` for every type `F`.
+pub trait Undecided<F>: Sized {
+    /// Continues processing.
+    ///
+    /// This method is called when the underlying machine is being woken up.
+    /// It should consider whatever new information has arrived and make
+    /// yet another decision how to proceeed. This decision may very well
+    /// be to defer yet again.
+    fn wakeup(self) -> Hesitant<F, Self>;
+}
+
+impl<F> Undecided<F> for Void {
+    fn wakeup(self) -> Hesitant<F, Self> {
+        // XXX Is that right?
+        unreachable!()
+    }
+}
+
+
+pub trait UndecidedReply<F>: Sized {
+    fn wakeup(self, send: ReplyBuf) -> Hesitant<F, Self>;
+}
+
+impl<F> UndecidedReply<F> for Void {
+    fn wakeup(self, _send: ReplyBuf) -> Hesitant<F, Self> {
+        unreachable!()
+    }
+}
+
+
+//============ The Actual SMTP Server Protocol ===============================
+
+/// A trait collecting the protocol implementation.
+pub trait Protocol: Sized {
+    type Session: SessionHandler<Self>;
+    type Mail: MailHandler<Self>;
+    type Data: DataHandler<Self>;
+
+    fn accept(&mut self, addr: &SocketAddr)
+              -> Option<<Self::Session as SessionHandler<Self>>::Seed>;
+}
+
+
+/// A trait for commands that can happen inside and outside of transactions.
+///
+/// RFC 5321 at some point calls the things in here ‘ancillary services’ and
+/// so shall we.
+pub trait AncillaryHandler: Sized {
+    type Verify: UndecidedReply<Self>;
+    type Expand: UndecidedReply<Self>;
+    type Help: UndecidedReply<Self>;
+
+    /// A VRFY command was received.
+    ///
+    /// The arguments to the command are given. The final response should
+    /// be the reply to the command.
+    fn verify(self, what: syntax::Word, params: syntax::VrfyParameters,
+              reply: ReplyBuf) -> Hesitant<Self, Self::Verify>;
+
+    /// An EXPN command has been received.
+    ///
+    ///
+    /// The arguments to the command are given. The final response should
+    /// be the reply to the command.
+    fn expand(self, what: syntax::Word, params: syntax::ExpnParameters,
+              reply: ReplyBuf) -> Hesitant<Self, Self::Expand>;
+
+    /// A HELP command has been received.
+    ///
+    /// The arguments to the command are given. The final response should
+    /// be the reply to the command.
+    fn help(self, what: Option<syntax::Word>, reply: ReplyBuf)
+            -> Hesitant<Self, Self::Help>;
+}
+
 
 /// The trait of the SMTP server session.
-///
-pub trait Protocol: Sized {
-    type Context: Context;
-    type Mail: MailTransaction;
+pub trait SessionHandler<P: Protocol>: AncillaryHandler { 
+    type Seed;
+    type Start: Undecided<Option<Self>>;
+    type Hello: Undecided<Option<Self>>;
+    type CheckTls: Undecided<Option<Self>>;
+    type Mail: UndecidedReply<Result<P::Mail, P::Session>>;
 
-    /// Start the protocol.
-    fn create(context: &Self::Context, notifier: Notifier) -> Option<Self>;
+    /// Start the session.
+    fn start(seed: Self::Seed, notifier: Notifier)
+             -> Hesitant<Option<Self>, Self::Start>;
 
     /// A HELO or EHLO command has been received.
     ///
     /// The domain passed in by the client as part of the hello is given
-    /// in *domain*. The reply to the hello is generated by underlying
-    /// machine. All you can do is stop processing by returning `Stop`
+    /// in *domain*. The reply to the hello is generated by the underlying
+    /// machine. All you can do is stop processing by returning `None`
     /// either right away or later.
-    ///
-    fn hello(self, domain: syntax::MailboxDomain) -> Hesitant<Self>;
-    fn continue_hello(self) -> Hesitant<Self> {
-        unreachable!()
-    }
+    fn hello(self, domain: syntax::MailboxDomain)
+             -> Hesitant<Option<Self>, Self::Hello>;
 
     /// A TLS handshake has finished.
-    ///
-    /// If the client presented a certificate, it is in *peer_cert*. This
-    /// method is here to allow you to decide whether to continue with the
-    /// session with this certificate (or its lack).
-    ///
-    fn starttls(self, peer_cert: Option<X509>) -> Hesitant<Self>;
-    fn continue_starttls(self) -> Hesitant<Self> {
-        unreachable!()
-    }
+    fn check_tls<C: Certificate>(self, peer_cert: Option<C>)
+                                 -> Hesitant<Option<Self>,
+                                             Self::CheckTls>;
 
-    /// Creates a new mail transaction for this session.
+    /// A MAIL command was received.
     ///
-    fn mail(&self) -> Self::Mail;
+    /// The arguments to the command are given as parameters. The final
+    /// response is either a new mail transaction value, in which case the
+    /// transport will generate a success response and proceed with the
+    /// mail transaction, or an error reply, in which case the transport
+    /// will send that reply and listen to the next command.
+    fn mail(self, path: syntax::ReversePath, params: syntax::MailParameters,
+            reply: ReplyBuf)
+            -> Hesitant<Result<P::Mail, P::Session>, Self::Mail>;
 
-    /// A VRFY command was received.
-    ///
-    fn verify(self, what: syntax::Word, params: syntax::VrfyParameters,
-              send: ReplyBuf) -> Hesitant<Self>;
-    fn continue_verify(self, send: ReplyBuf) -> Hesitant<Self> {
-        let _ = send;
-        unreachable!()
-    }
-
-    /// An EXPN command has been received.
-    ///
-    fn expand(self, what: syntax::Word, params: syntax::ExpnParameters,
-              send: ReplyBuf) -> Hesitant<Self>;
-    fn continue_expand(self, send: ReplyBuf) -> Hesitant<Self> {
-        let _ = send;
-        unreachable!()
-    }
-
-    /// A HELP command has been received.
-    ///
-    fn help(self, what: Option<syntax::Word>, send: ReplyBuf)
-            -> Hesitant<Self>;
-    fn continue_help(self, send: ReplyBuf) -> Hesitant<Self> {
-        let _ = send;
-        unreachable!()
-    }
 }
 
 
 /// The trait for a single mail transaction.
-///
-pub trait MailTransaction: Sized {
-
-    //--- Mail transactions
-
-    /// A MAIL command has been received.
-    ///
-    /// The next method called is either `rcpt()` or `rset()`.
-    ///
-    /// It is your responsibility to send the correct reply using the
-    /// reply buffer provided in *send*. You will have to provide the
-    /// reply even if you return `None` to indicate that you want to
-    /// abort this transaction.
-    ///
-    fn mail(self, path: syntax::ReversePath, params: syntax::MailParameters,
-            send: ReplyBuf) -> Hesitant<Self>;
-    fn continue_mail(self, send: ReplyBuf) -> Hesitant<Self> {
-        let _ = send;
-        unreachable!()
-    }
+pub trait MailHandler<P: Protocol>: AncillaryHandler {
+    type Recipient: UndecidedReply<Result<Self, P::Session>>;
+    type Data: Undecided<Result<P::Data, P::Session>>;
 
     /// A RCPT command has been received.
     ///
-    /// The next method is either `rcpt()`, `data()` or `rset()`.
-    ///
-    /// It is your responsibility to send the correct reply using the
-    /// reply buffer provided in *send*. You will have to provide the
-    /// reply even if you return `None` to indicate that you want to
-    /// abort this transaction.
-    ///
-    fn recipient(self, path: syntax::RcptPath,
-                  params: syntax::RcptParameters, send: ReplyBuf)
-                  -> Hesitant<Self>;
-    fn continue_recipient(self, send: ReplyBuf) -> Hesitant<Self> {
-        let _ = send;
-        unreachable!()
-    }
+    /// The final response is a new value of `Self` on success or an error
+    /// response otherwise in which case the error response will be sent
+    /// and the transaction is over.
+    fn recipient(self, path: syntax::RcptPath, params: syntax::RcptParameters,
+                 reply: ReplyBuf)
+                 -> Hesitant<Result<Self, P::Session>, Self::Recipient>;
 
     /// A DATA (or BDAT) command has been received.
     ///
-    /// The underlying machine takes care of the actual data handling. If
-    /// you return in the affirmative here, `chunk()` is called next.
+    /// If processing succeeds, the final response should be a new instance
+    /// of the mail data type which receives the actual data. In case of an
+    /// error, return an error reply and the transaction is over.
     ///
-    fn data(self) -> Hesitant<Self>;
-    fn continue_data(self) -> Hesitant<Self> {
-        unreachable!()
-    }
+    /// Note that this method may be called even if there was no single
+    /// call to `recipient()` before. In this case as well as when you
+    /// didn’t accept any of the recipients before, it is your task to
+    /// reject the `data()` call and return a session.
+    fn data(self) -> Hesitant<Result<P::Data, P::Session>, Self::Data>;
+
+    /// A RSET command has been received.
+    ///
+    /// This ends the transaction.
+    fn reset(self) -> P::Session;
+}
+
+
+/// The trait for handling incoming mail data.
+pub trait DataHandler<P: Protocol>: Sized {
+    type Complete: UndecidedReply<P::Session>;
 
     /// A chunk of message data has been received.
     ///
     /// There is no defering or cancelling here. You will have to process
     /// the chunk of data in *data* or loose it.
-    ///
     fn chunk(&mut self, data: &[u8]);
 
     /// The last chunk was received.
     ///
-    /// Once you do a final affirmative return or a none-return, the
-    /// transaction is over.
-    ///
-    fn complete(self, send: ReplyBuf) -> Hesitant<Self>;
-    fn continue_complete(self, send: ReplyBuf) -> Hesitant<Self> {
-        let _ = send;
-        unreachable!()
-    }
-
-    /// A RSET command was received.
-    ///
-    /// Once you do a final affirmative return or a none-return, the
-    /// transaction is over.
-    ///
-    fn reset(self) -> Hesitant<Self>;
-    fn continue_reset(self) -> Hesitant<Self> {
-        unreachable!()
-    }
+    /// The final response should be the reply to be sent.
+    fn complete(self, reply: ReplyBuf)
+                -> Hesitant<P::Session, Self::Complete>;
 }
+
